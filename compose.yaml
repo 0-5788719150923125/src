@@ -1,0 +1,103 @@
+name: src
+
+# The stack: an always-on member of The Source's swarm, so the radio and
+# the chat rooms never depend on someone keeping a browser tab open.
+#
+#   tracker   introduces peers to each other, and carries their WebRTC
+#             handshakes (WebSocket, port 8002). Optional: public trackers
+#             do the same job; this one is redundancy you control
+#   seeder    seeds every station as a torrent, and relays chat
+#   webseed   serves the station folders over HTTP (port 8001), so a
+#             browser that cannot reach any peer still plays the radio
+#   tunnel    optional: publishes the tracker and the web seed through a
+#             Cloudflare Tunnel (docker compose --profile tunnel up -d)
+
+x-app: &app
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# One image runs tracker.js, seed.js and webseed.js. It runs as your user,
+# so it can read station folders that only you can read.
+x-node: &node
+  image: src-node:4
+  build:
+    context: .
+    dockerfile: containers/node/Dockerfile
+  user: "${PUID:-1000}:${PGID:-1000}"
+
+services:
+  tracker:
+    <<: [*app, *node]
+    command: [node, tracker.js]
+    environment:
+      PORT: "8002"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-8002}:8002"
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8002/stats.json').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  seeder:
+    <<: [*app, *node]
+    command: [node, seed.js]
+    depends_on:
+      tracker:
+        condition: service_healthy
+    environment:
+      # Announced to, but never written into a .torrent file.
+      TRACKERS: ws://tracker:8002
+      # Written into every .torrent file.
+      ANNOUNCE: ${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
+      ROOMS: ${ROOMS:-trade}
+    volumes:
+      # One line per station: a folder, mounted at /radio/<frequency>.
+      - ${STATION_59:-./data/radio/59}:/radio/59:ro
+      - torrents:/torrents
+    healthcheck:
+      test: [CMD, node, -e, "process.exit(Date.now() - Number(require('fs').readFileSync('/tmp/alive', 'utf8')) < 90000 ? 0 : 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+
+  webseed:
+    <<: [*app, *node]
+    command: [node, webseed.js]
+    environment:
+      PORT: "8001"
+    volumes:
+      - ${STATION_59:-./data/radio/59}:/radio/59:ro
+      - torrents:/torrents:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEBSEED_PORT:-8001}:8001"
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8001/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  tunnel:
+    <<: *app
+    profiles: [tunnel]
+    image: docker.io/cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d
+    command: [tunnel, --no-autoupdate, run]
+    environment:
+      # In the tunnel's settings, route a hostname to http://webseed:8001
+      # and, optionally, another to http://tracker:8002.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      tracker:
+        condition: service_healthy
+      webseed:
+        condition: service_healthy
+
+volumes:
+  torrents:

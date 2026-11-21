@@ -1,0 +1,340 @@
+/* The Source: a terminal, white on black. */
+
+:root {
+  --core: rgb(196, 63, 63); /* red: you, INK@CORE */
+  --root: rgb(71, 199, 125); /* green: PEN@ROOT */
+  --fold: rgb(66, 150, 228); /* blue: ONE@FOLD, and links */
+  --good: rgb(176, 135, 223); /* purple: anyone who signs */
+  --marquee-x: 0px; /* how far the ticker slides; set by terminal.js */
+}
+
+@font-face {
+  font-family: 'Inconsolata';
+  font-style: normal;
+  font-weight: 300;
+  src: url('assets/inconsolata-v20-latin-regular.woff2') format('woff2');
+}
+
+html {
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar {
+  display: none;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-size: 11pt;
+  font-family: Inconsolata, monospace;
+  color: white;
+  background-color: black;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+::selection {
+  background-color: white;
+  color: black;
+}
+
+a {
+  color: var(--fold);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+#container {
+  padding: 0 1em 3em 1em;
+}
+
+/* ------------------------------------------------------------ colors */
+
+.core {
+  color: var(--core);
+}
+
+.root {
+  color: var(--root);
+}
+
+.fold {
+  color: var(--fold);
+}
+
+.good {
+  color: var(--good);
+}
+
+.bad {
+  background-color: var(--good);
+}
+
+.missing {
+  color: black;
+  background-color: white;
+}
+
+/* ------------------------------------------------------------ ticker */
+
+#pen {
+  position: sticky;
+  top: 0;
+  z-index: 150;
+  overflow-x: hidden;
+  white-space: nowrap;
+  background-color: black;
+}
+
+/* PEN@ROOT stays put; the state slides under it. */
+#head {
+  position: relative;
+  z-index: 666;
+  background-color: black;
+}
+
+#state {
+  margin-left: 7px;
+}
+
+#state.ticking {
+  position: relative;
+  animation: slide 45s ease-in-out 10s infinite;
+}
+
+@keyframes slide {
+  from {
+    left: 0;
+  }
+  to {
+    left: var(--marquee-x);
+  }
+}
+
+/* ------------------------------------------------------------ output */
+
+output h1 {
+  font-size: 1.7em;
+  letter-spacing: 4px;
+}
+
+output h2 {
+  letter-spacing: 4px;
+}
+
+output h3 {
+  letter-spacing: 4px;
+  margin: 0;
+}
+
+output pre {
+  margin-left: 30px;
+}
+
+.content {
+  position: relative;
+}
+
+.handle {
+  margin-right: 1ch;
+}
+
+.text {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+}
+
+.content .tooltip {
+  visibility: hidden;
+  position: absolute;
+  z-index: 100;
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  color: black;
+  background-color: white;
+}
+
+.content:hover .tooltip {
+  visibility: visible;
+}
+
+/* /help */
+.help {
+  column-width: 0.5em;
+  column-count: 3;
+  width: 25em;
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+}
+
+/* The welcome sigil. */
+.logo {
+  float: left;
+  width: 5em;
+  margin: 0 1em 1em 0;
+}
+
+/* ------------------------------------------------------------ command line */
+
+#input-line {
+  display: flex;
+  clear: both;
+}
+
+#prompt {
+  flex: none;
+}
+
+#command {
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 0 7px;
+  padding: 0;
+  border: none;
+  outline: none;
+  font: inherit;
+  color: inherit;
+  background-color: transparent;
+}
+
+/* ------------------------------------------------------------ the void */
+
+/* Behind everything: a bullet for every peer that connects (bullets.js). */
+#void {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------ the atom */
+
+/* The banner's art: a nucleus and three electrons, each on its own orbit. */
+#atom {
+  position: relative;
+  float: left;
+  width: 5em;
+  height: 5em;
+  margin: 0 1em 1em 0;
+}
+
+#nucleus,
+.orbit,
+.electron {
+  position: absolute;
+  inset: 0;
+  width: 20px;
+  height: 20px;
+  margin: auto;
+  border-radius: 75%;
+}
+
+#nucleus {
+  background: #fff;
+  box-shadow: 0 0 15px #fff;
+  animation: shine 2s infinite linear;
+}
+
+.orbit {
+  width: 5em;
+  height: 5em;
+  border: 0;
+  transform-style: preserve-3d;
+  animation: trace 3s infinite linear;
+}
+
+.orbit::before {
+  content: ' ';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border: 0.123em solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+}
+
+.orbit .electron {
+  position: relative;
+  top: 2.3em;
+  width: 0.4em;
+  height: 0.4em;
+  background: #fff;
+  box-shadow: 0 0 30px #fff;
+  border-radius: 75%;
+  transform: translateX(100px);
+  animation: revolve 3s infinite linear;
+}
+
+.orbit:nth-child(2) {
+  transform: rotateY(65deg) rotateX(-54deg);
+  animation-delay: -1s;
+  animation-duration: 1s;
+}
+
+.orbit:nth-child(2) .electron {
+  animation-duration: 1s;
+}
+
+.orbit:nth-child(3) {
+  transform: rotateY(65deg) rotateX(54deg);
+}
+
+.orbit:nth-child(4) {
+  transform: rotateY(65deg) rotateX(5deg);
+  animation-delay: -1s;
+}
+
+.orbit:nth-child(4) .electron {
+  animation-delay: -1s;
+}
+
+@keyframes revolve {
+  0% {
+    transform: rotateZ(0deg) translateX(2.45em) rotateZ(0deg) rotateY(-65deg);
+  }
+  100% {
+    transform: rotateZ(360deg) translateX(2.45em) rotateZ(-360deg) rotateY(-65deg);
+  }
+}
+
+@keyframes trace {
+  0% {
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  35% {
+    border: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  70% {
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  100% {
+    border: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.5);
+  }
+}
+
+@keyframes shine {
+  0% {
+    box-shadow: 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 40px #fff;
+  }
+  100% {
+    box-shadow: 0 0 0 transparent;
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "src-node",
+  "version": "4.0.0",
+  "private": true,
+  "description": "The stack for The Source: a tracker, a peer that seeds the radio and relays chat, and a web seed.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "seed": "node seed.js",
+    "tracker": "node tracker.js",
+    "webseed": "node webseed.js"
+  },
+  "dependencies": {
+    "bittorrent-tracker": "11.2.3",
+    "parse-torrent": "11.0.24",
+    "webtorrent": "3.0.21"
+  },
+  "allowScripts": {
+    "node-datachannel@0.32.3": true
+  }
+}

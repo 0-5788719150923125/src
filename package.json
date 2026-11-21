@@ -1,0 +1,21 @@
+{
+  "name": "src",
+  "version": "4.0.0",
+  "private": true,
+  "description": "The Source: a terminal on the web, with peer-to-peer chat, a radio, and a language model in the tab.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node main.js",
+    "build": "node main.js --build",
+    "test": "node --test",
+    "deploy": "node main.js --deploy",
+    "vendor": "node scripts/vendor.js"
+  },
+  "devDependencies": {
+    "webtorrent": "3.0.21"
+  }
+}

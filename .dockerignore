@@ -1,0 +1,8 @@
+# Only the stack's Node image is built here; send it nothing else.
+*
+!containers/node/package.json
+!containers/node/package-lock.json
+!containers/node/seed.js
+!containers/node/tracker.js
+!containers/node/webseed.js
+!src/js/room.js

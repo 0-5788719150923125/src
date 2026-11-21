@@ -1,0 +1,19 @@
+# Credentials and local settings - never commit
+.env
+.env.*
+!.env.example
+
+# Build output
+build/
+
+# The stack's local data
+/data/
+/state/
+
+# Node (the seeder's dependencies; wrangler's cache)
+node_modules/
+.wrangler/
+
+# Python
+__pycache__/
+*.pyc

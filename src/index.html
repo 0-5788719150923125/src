@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; connect-src *; media-src *">
+        <link rel="shortcut icon" href="favicon.ico">
+        <link rel="stylesheet" href="style.css">
+        <title>The Source</title>
+        <!--SRC_BUILD-->
+        <!--SRC_CONFIG-->
+    </head>
+    <body>
+        <div id="container">
+            <div id="pen"><span id="head" class="root"></span><span id="state"></span></div>
+            <output></output>
+            <div id="input-line">
+                <div id="prompt"></div>
+                <input id="command" autofocus>
+            </div>
+            <canvas id="void"></canvas>
+        </div>
+        <script type="module" src="js/main.js"></script>
+    </body>
+</html>
