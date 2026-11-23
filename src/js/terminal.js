@@ -1,14 +1,15 @@
 // The terminal: the command line and its history, the banner, and the
 // ticker that prints the state after PEN@ROOT.
 
-import { send } from './chat.js'
-import { available, find } from './commands.js'
+import { connect, send } from './chat.js'
+import { find } from './commands.js'
+import * as ghost from './ghost.js'
 import { you } from './identity.js'
-import { seal } from './offline.js'
 import { SPEAKERS, banner, handle, print, say, showPrompt } from './print.js'
 import * as radio from './radio.js'
-import { bookIsOpen, state } from './state.js'
-import { escape, load, t } from './text.js'
+import { sortedKeys, state } from './state.js'
+import { load, t } from './text.js'
+import * as writer from './writer.js'
 
 const input = document.getElementById('command')
 
@@ -21,28 +22,20 @@ const parse = (line) =>
         .map((word) => word.replace(/"(.+)"/, '$1'))
         .filter(Boolean)
 
-// A command if the line names one; otherwise, a message: to the room while
-// the book is open, sealed for later while it is not.
+// A command if the line names one; otherwise, a message to the room.
 export async function run(name, args = [], line = '') {
     const command = find(name)
-    if (command && available(command)) return command.run(args)
+    if (command) return command.run(args)
     if (name.startsWith('/')) return say(t('terminal.missing', { command: name }))
-    if (bookIsOpen()) return send(line)
-    return seal(line)
+    return send(line)
 }
 
 // Echo the line, then act on it.
 async function submit(line) {
     const [word, ...args] = parse(line)
     const name = word.toLowerCase()
-    const command = find(name)
-    if (command?.secret?.(args)) {
-        print(you(), { html: `${escape(word)} <span class="missing">${escape(t('terminal.protected'))}</span>` })
-    } else {
-        remember(line)
-        const echo = print(you(), line)
-        if (command?.expires) setTimeout(() => echo.remove(), command.expires * 1000)
-    }
+    remember(line)
+    print(you(), line)
     await run(name, args, line)
 }
 
@@ -67,11 +60,15 @@ function walk(step) {
     input.value = history[position] ?? draft
 }
 
+// The line is a textarea so that it can wrap, but it stays one line: Enter
+// sends, up and down walk the history, and pasted line breaks become spaces.
 function onKey(event) {
     if (event.isComposing) return
-    if (event.key === 'ArrowUp') walk(-1)
-    else if (event.key === 'ArrowDown') walk(1)
-    else if (event.key === 'Enter') {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault()
+        walk(event.key === 'ArrowUp' ? -1 : 1)
+    } else if (event.key === 'Enter') {
+        event.preventDefault()
         const line = input.value.replace(/[“”]/g, '"')
         if (!line.trim()) return
         input.value = ''
@@ -84,16 +81,45 @@ function onKey(event) {
 const pen = document.getElementById('pen')
 const head = document.getElementById('head')
 const ticker = document.getElementById('state')
+const [text, echo] = ticker.children
+const SPEED = 30 // pixels a second
 
-// The state, scrolling when it is wider than the screen. Widths are read
-// from the text itself, which the scrolling does not change.
+let loop = 0 // how far the text slides before it repeats; 0 while it fits
+let offset = 0
+let last = null
+
+// The state, looping when it is wider than the screen: the text is followed
+// by a copy of itself, and once the copy has slid to where the text began,
+// the slide starts over from there unseen. Widths are read from the text
+// itself, which the sliding does not change.
 function tick() {
-    ticker.textContent = JSON.stringify(state.snapshot())
+    const json = JSON.stringify(sortedKeys(state.snapshot()))
+    if (json !== text.textContent) text.textContent = echo.textContent = json
     const margin = parseFloat(getComputedStyle(ticker).marginLeft) || 0
-    const overflow = head.offsetWidth + margin + ticker.offsetWidth - document.body.clientWidth
+    const overflow = head.offsetWidth + margin + text.getBoundingClientRect().width - document.body.clientWidth
     ticker.classList.toggle('ticking', overflow > 0)
-    if (overflow > 0) ticker.style.setProperty('--marquee-x', `-${overflow + Math.ceil(head.offsetWidth / 3) * 3}px`)
-    else ticker.style.removeProperty('--marquee-x')
+    loop = overflow > 0 ? echo.getBoundingClientRect().left - text.getBoundingClientRect().left : 0
+    if (loop && last === null) {
+        last = performance.now()
+        requestAnimationFrame(slide)
+    }
+}
+
+// Moves at a steady speed, measured in pixels rather than as a fraction of
+// the loop, so a state that grows or shrinks does not make the text jump.
+function slide(now) {
+    if (!loop) {
+        offset = 0
+        last = null
+        ticker.style.removeProperty('transform')
+        return
+    }
+    // A hidden tab gets no frames; it picks up where it left off.
+    const elapsed = Math.min(Math.max(now - last, 0), 100)
+    offset = (offset + (SPEED * elapsed) / 1000) % loop
+    last = now
+    ticker.style.transform = `translateX(${-offset}px)`
+    requestAnimationFrame(slide)
 }
 
 // iOS keyboards push the ticker out of view; the Visual Viewport API puts
@@ -121,12 +147,27 @@ export async function start() {
     head.textContent = handle({ ...SPEAKERS.pen, symbol: '=' })
     showPrompt(you())
     input.addEventListener('keydown', onKey)
+    input.addEventListener('input', () => {
+        if (!/[\r\n]/.test(input.value)) return
+        const at = input.selectionStart
+        input.value = input.value.replace(/\r?\n/g, ' ')
+        input.setSelectionRange(at, at)
+    })
+    // Wrapped lines start at the left edge; the first starts after the prompt.
+    const prompt = document.getElementById('prompt')
+    const indent = () => input.parentElement.style.setProperty('--indent', `${prompt.offsetWidth + 7}px`)
+    new ResizeObserver(indent).observe(prompt)
+    indent()
+    ghost.attach()
     print(null, banner(ATOM, t('banner.title')))
     tick()
     setInterval(tick, 500)
     pinTicker()
     // Stations heard before are seeded again from what this browser holds.
     radio.restore()
-    // ?focus=name connects straight into that room.
-    if (new URLSearchParams(window.location.search).has('focus')) run('/connect')
+    // Into the chat named in the address (?chat=), or the default one,
+    // signed in without a word; and the writer's model starts loading at
+    // once, its progress in the ticker.
+    connect()
+    writer.load()
 }

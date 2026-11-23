@@ -5,7 +5,7 @@
 //   - Spaces are kept where they matter: at the start of a line, and in
 //     runs of two or more (indents, aligned columns, ASCII art).
 //   - [words]{.class} puts words in a span of that class: the colors are
-//     core, root, fold, good and bad; missing is white on black.
+//     core, root and fold; missing is white on black.
 //
 // What it reads: # headings, paragraphs, - and 1. lists (nested by indent),
 // ``` fenced code, *italics*, **bold**, ~~struck~~, `code`, [links](url),
@@ -241,7 +241,7 @@ export function inline(text) {
             if (found) {
                 html +=
                     found.url !== undefined
-                        ? `<a href="${escape(found.url)}">${inline(found.label)}</a>`
+                        ? `<a href="${escape(found.url)}" target="_blank" rel="noopener">${inline(found.label)}</a>`
                         : `<span class="${escape(found.className)}">${inline(found.label)}</span>`
                 i = found.next
                 continue

@@ -1,12 +1,6 @@
-# focus
+# usage
 
-Change focus to a different topic.
-Available commands:
-  */focus [name]*
-  */focus [name] [password]* # Encrypt all messages with a shared password.
-Example:
-  */focus trade*
-  */focus guild 1HtgQiWv3iL1*
+Join a chat: */chat \<name\>*
 
 # failed
 

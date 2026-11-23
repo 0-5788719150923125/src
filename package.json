@@ -13,7 +13,24 @@
     "build": "node main.js --build",
     "test": "node --test",
     "deploy": "node main.js --deploy",
-    "vendor": "node scripts/vendor.js"
+    "undeploy": "node main.js --undeploy",
+    "vendor": "node scripts/vendor.js",
+    "rules": "node scripts/rules.js",
+    "stack": "docker compose up -d --build",
+    "stack:attached": "docker compose up --build",
+    "stack:logs": "docker compose --profile test --profile tunnel --profile public logs -f --tail 100",
+    "stack:ps": "docker compose --profile test --profile tunnel --profile public ps",
+    "stack:restart": "docker compose restart",
+    "stack:down": "docker compose --profile test --profile tunnel --profile public down",
+    "stack:wipe": "docker compose --profile test --profile tunnel --profile public down --volumes",
+    "tunnel": "docker compose --profile tunnel up -d",
+    "public": "docker compose --profile public up -d --build",
+    "public:logs": "docker compose --profile public logs -f --tail 100 traefik seeder",
+    "peers": "docker compose --profile test up -d --build peers",
+    "peers:quijote": "PEER_DATA=quijote docker compose --profile test up -d --build --force-recreate peers",
+    "peers:logs": "docker compose logs -f --tail 100 peers",
+    "peers:down": "docker compose --profile test rm --stop --force peers",
+    "peers:local": "node main.js --peers 8"
   },
   "devDependencies": {
     "webtorrent": "3.0.21"

@@ -33,3 +33,14 @@ export function seededRandom(str) {
 }
 
 export const seededPick = (array, seed) => array[Math.floor(seededRandom(seed) * array.length)]
+
+// A shuffled copy that every device makes alike from the same seed: each
+// draw is seededRandom of the seed and the draw's number.
+export function seededShuffle(array, seed) {
+    const copy = [...array]
+    for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(seededRandom(`${seed}:${i}`) * (i + 1))
+        ;[copy[i], copy[j]] = [copy[j], copy[i]]
+    }
+    return copy
+}

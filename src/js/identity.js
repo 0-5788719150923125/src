@@ -1,41 +1,34 @@
-// Who you are. An identity is a secret of 96 characters or more, and it
-// deterministically becomes an Ed25519 key pair (crypto.js), so the same
-// identity signs as the same sender on any device. /id chooses one;
-// /connect signs in with it, and the tab remembers it until it closes.
+// Who you are: a key pair this browser makes for itself the first time it
+// connects, and keeps, so everything it says in a room is signed by the same
+// key. What is kept (localStorage) is a random secret, which always becomes
+// the same Ed25519 key pair (crypto.js keysFor). There is nothing to choose
+// and nothing to type; a browser that loses the secret becomes someone new.
 
 import { keysFor, randomHex } from './crypto.js'
 import { SPEAKERS, say } from './print.js'
-import { randomBetween } from './random.js'
-import { html, t } from './text.js'
+import { t } from './text.js'
 
-const MIN_LENGTH = 96
-const STORED = 'identity' // sessionStorage
+const STORED = 'identity' // localStorage: the secret
 
-let chosen = null
 let keys = null
 
-// /id [identity], or /id auto for a new one.
-export async function choose([identity]) {
-    if (identity === undefined) return say(html('id.usage'))
-    if (identity === 'auto') {
-        sessionStorage.removeItem(STORED)
-        chosen = randomHex(randomBetween(MIN_LENGTH, 128))
-        const { pub } = await keysFor(chosen)
-        return say(html('id.created', { identity: chosen, identifier: pub }), { block: true })
-    }
-    if (identity.length < MIN_LENGTH) return say(t('id.short', { min: MIN_LENGTH }))
-    chosen = identity
-    say(t('id.accepted'))
-}
-
-// At /connect: the keys of the chosen identity, or of the one this tab used
-// last. Null when there is none, or when the browser cannot sign.
+// At /connect: this browser's keys, made the first time. Null when the
+// browser cannot sign (no Ed25519), which keeps it out of the rooms: every
+// message must be signed.
 export async function signIn() {
-    const identity = chosen || sessionStorage.getItem(STORED)
-    if (!identity) return null
+    if (keys) return keys
+    let secret = null
     try {
-        keys = await keysFor(identity)
-        sessionStorage.setItem(STORED, identity)
+        secret = localStorage.getItem(STORED)
+    } catch {}
+    if (!secret) {
+        secret = randomHex(128)
+        try {
+            localStorage.setItem(STORED, secret)
+        } catch {}
+    }
+    try {
+        keys = await keysFor(secret)
     } catch (err) {
         console.error(err)
         say(t('id.unsupported'))
@@ -45,4 +38,4 @@ export async function signIn() {
 
 export const signedIn = () => keys
 
-export const you = () => (keys ? SPEAKERS.one : SPEAKERS.ink)
+export const you = () => SPEAKERS.ink

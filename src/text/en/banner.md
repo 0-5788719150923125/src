@@ -1,4 +1,4 @@
-<!-- The banner: printed when the page opens, and again on joining a room. -->
+<!-- The banner: printed when the page opens, and again on joining a chat. -->
 
 # title
 

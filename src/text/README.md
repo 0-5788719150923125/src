@@ -19,11 +19,12 @@ Entries are Markdown, as a terminal prints it:
   on one line, and break lines only where the terminal should.
 - **Spaces are kept** at the start of a line and in runs of two or more, for
   indents and columns: `  */radio stop*` prints indented.
-- `*italics*`, `**bold**`, `~~struck~~`, `[a link](https://...)`,
+- `*italics*`, `**bold**`, `~~struck~~`, `[a link](https://...)` (links
+  open in a new tab),
   `![an image](assets/name.png)`, `## headings`, `- lists` and `1. lists`
   (nested by indenting), and ` ``` ` fences around text printed exactly.
 - **Colors:** `[words]{.core}` (red), `{.root}` (green), `{.fold}` (blue),
-  `{.good}` (purple), `{.bad}` (on purple), `{.missing}` (black on white).
+  and `{.missing}` (black on white).
 - **Macros:** `%name%` is filled in when the line is printed (a date, a key,
   a station). Keep each one; move it wherever the sentence needs it.
 - HTML tags pass through as they are, for what Markdown lacks (`<u>`).

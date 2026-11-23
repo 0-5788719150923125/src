@@ -1,7 +1,10 @@
 name: src
 
-# The stack: an always-on member of The Source's swarm, so the radio and
-# the chat rooms never depend on someone keeping a browser tab open.
+# The stack, optional: an always-on member of The Source's swarm, for a
+# public server, where browsers anywhere can reach its seeder. The site
+# needs none of it: builds hash the stations themselves, and listeners, the
+# public trackers and the mirror carry the radio. To use it from the site,
+# set SRC_SEED_URL and SRC_TRACKER_URL (.env.example).
 #
 #   tracker   introduces peers to each other, and carries their WebRTC
 #             handshakes (WebSocket, port 8002). Optional: public trackers
@@ -44,21 +47,33 @@ services:
       retries: 3
       start_period: 10s
 
+  # The seeder is on the host's network, not Docker's, so WebRTC peers reach
+  # it at this machine's own addresses with no Docker NAT in the way: on a
+  # public server, from behind any NAT, with no TURN relay; at home, from
+  # the same LAN (Docker's network offered only its 172.x addresses). Open
+  # WEBRTC_PORTS (UDP) in the firewall of a public server, and in the cloud
+  # provider's. Host networking needs Linux, or a recent Docker Desktop with
+  # it turned on.
   seeder:
     <<: [*app, *node]
     command: [node, seed.js]
+    network_mode: host
     depends_on:
       tracker:
         condition: service_healthy
     environment:
-      # Announced to, but never written into a .torrent file.
-      TRACKERS: ws://tracker:8002
+      # Announced to, but never written into a .torrent file: the stack's
+      # tracker, as published on the host.
+      TRACKERS: ws://${BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-8002}
       # Written into every .torrent file.
       ANNOUNCE: ${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
       ROOMS: ${ROOMS:-trade}
+      # WebRTC's UDP ports, and an upload cap in KiB/s (seed.js).
+      WEBRTC_PORTS: ${WEBRTC_PORTS:-51000-51999}
+      UPLOAD_LIMIT: ${UPLOAD_LIMIT:-0}
     volumes:
       # One line per station: a folder, mounted at /radio/<frequency>.
-      - ${STATION_59:-./data/radio/59}:/radio/59:ro
+      - ${STATION_59_1:-./data/radio/59.1}:/radio/59.1:ro
       - torrents:/torrents
     healthcheck:
       test: [CMD, node, -e, "process.exit(Date.now() - Number(require('fs').readFileSync('/tmp/alive', 'utf8')) < 90000 ? 0 : 1)"]
@@ -73,7 +88,7 @@ services:
     environment:
       PORT: "8001"
     volumes:
-      - ${STATION_59:-./data/radio/59}:/radio/59:ro
+      - ${STATION_59_1:-./data/radio/59.1}:/radio/59.1:ro
       - torrents:/torrents:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${WEBSEED_PORT:-8001}:8001"
@@ -83,6 +98,64 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # Test peers for the ghost text's swarm memory: they hold a biased library
+  # (children's stories, or Don Quijote) and answer what browsers in their
+  # room ask while typing. Not part of the stack proper:
+  #   docker compose --profile test up -d --build peers
+  # then open the site at ?chat=memorytest.
+  peers:
+    <<: [*app, *node]
+    profiles: [test]
+    command: [node, peers.js]
+    depends_on:
+      tracker:
+        condition: service_healthy
+    environment:
+      TRACKERS: ws://tracker:8002,${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
+      PEERS: ${PEERS:-8}
+      PEER_DATA: ${PEER_DATA:-tinystories}
+      PEER_ROOM: ${PEER_ROOM:-memorytest}
+      PEER_DROP: ${PEER_DROP:-0}
+      PEER_DELAY: ${PEER_DELAY:-0}
+      DATA_DIR: /data
+    volumes:
+      - peers:/data
+
+  # TLS on a public server: Traefik in front of the tracker and the web seed,
+  # with certificates from Let's Encrypt. It uses the TLS-ALPN challenge, so
+  # only port 443 has to be reachable; port 80 only redirects to it. Point
+  # the DNS of TRACKER_HOST and SEED_HOST at this server, set them in .env,
+  # then: docker compose --profile public up -d --build. Routes are in
+  # containers/traefik/dynamic.yml.
+  traefik:
+    <<: *app
+    profiles: [public]
+    image: docker.io/library/traefik:v3.7.19@sha256:a6c0194dda77bcb804824580f36fa7edc56e315b1acfe933366c8b52844a78a4
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-}
+      - --certificatesresolvers.letsencrypt.acme.caserver=${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    environment:
+      TRACKER_HOST: ${TRACKER_HOST:-}
+      SEED_HOST: ${SEED_HOST:-}
+    ports:
+      - "${PUBLIC_HTTP_PORT:-80}:80"
+      - "${PUBLIC_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./containers/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - certificates:/certificates
+    depends_on:
+      tracker:
+        condition: service_healthy
+      webseed:
+        condition: service_healthy
 
   tunnel:
     <<: *app
@@ -101,3 +174,5 @@ services:
 
 volumes:
   torrents:
+  peers:
+  certificates:

@@ -15,18 +15,20 @@ test('t fills macros and leaves unknown ones', () => {
 
 test('html renders an entry and escapes what is filled in', () => {
     assert.equal(
-        html('offline.sealed', { message: '*<b>&*', key: { html: '<u>k</u>' } }).html,
-        'Your offline message is:<br>  <i>*&lt;b&gt;&amp;*</i><br>Your decryption key is:<br>  <i><u>k</u></i>'
+        html('radio.playing', { artist: '*<b>&*', title: { html: '<u>t</u>' } }).html,
+        'Now playing: *&lt;b&gt;&amp;* - &quot;<u>t</u>&quot;'
     )
     assert.equal(markdown('*%x%*', { x: '%y%' }).html, '<i>%y%</i>')
 })
 
-test('the lore reads as pages and lists', () => {
-    assert.deepEqual(names('about').sort(), ['access', 'archives', 'experiments', 'overview', 'support', 'us'])
+test('/about is the overview, with its links', () => {
+    assert.deepEqual(names('about'), ['overview'])
     assert.ok(list('lore.types').includes('[GHOST]'))
-    assert.ok(list('lore.partners').every((partner) => partner.text && /^https?:|^assets\//.test(partner.url)))
-    assert.match(html('about.access').html, /^<h2>Access<\/h2>/)
-    assert.match(source('about.us'), /^## The Wired\n\nOur story begins/)
+    const overview = html('about.overview', { type: '[GHOST]' }).html
+    assert.match(overview, /^<h2>Overview<\/h2>/)
+    assert.match(overview, /<span class="missing">\[GHOST\]<\/span>/)
+    assert.match(overview, /href="https:\/\/github\.com\/0-5788719150923125"/)
+    assert.match(overview, /href="https:\/\/gitlab\.com\/the-resistance\/src\.eco"/)
 })
 
 // Every key the code asks for exists, and every entry outside the lore is

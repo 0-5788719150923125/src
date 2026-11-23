@@ -2,7 +2,7 @@
 //
 // A station is a folder of audio files on the machine that runs the stack.
 // The stack seeds it as one torrent named after its frequency (see
-// compose.yaml, and STATION_59 in .env) and serves the same folder as a web
+// compose.yaml, and STATION_59_1 in .env: a dot is an underscore) and serves the same folder as a web
 // seed. There is no track list to keep here: the browser reads the tracks
 // from the torrent, using the folder's file names.
 //
@@ -13,7 +13,7 @@
 // order. artist defaults to 'Various Artists'.
 
 export default {
-    59: {
+    '59.1': {
         name: '59 Songs You MUST Hear Before You Die!',
         artist: 'Toehider',
         mode: 'shuffle'

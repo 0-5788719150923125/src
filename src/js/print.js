@@ -8,11 +8,20 @@
 import { escape, html } from './text.js'
 import { formatDate } from './time.js'
 
+// A list in `count` columns, read top to bottom, the extra items going to
+// the first columns one each: seven in three are 3, 2 and 2.
+const columns = (items, count) => {
+    const out = []
+    for (let c = 0, at = 0; c < count; c++) {
+        const size = Math.floor(items.length / count) + (c < items.length % count ? 1 : 0)
+        out.push(items.slice(at, (at += size)))
+    }
+    return out.filter((column) => column.length)
+}
+
 export const SPEAKERS = {
     ink: { symbol: '<', name: 'INK', location: 'CORE', color: 'core' }, // you
-    one: { symbol: '<', name: 'ONE', location: 'FOLD', color: 'good' }, // you, signed
-    fold: { symbol: '>', name: 'ONE', location: 'FOLD', color: 'fold' }, // the terminal, and strangers
-    signed: { symbol: '>', name: 'ONE', location: 'FOLD', color: 'good' }, // a stranger who signs
+    fold: { symbol: '>', name: 'ONE', location: 'FOLD', color: 'fold' }, // the terminal, and everyone else
     pen: { symbol: '>', name: 'PEN', location: 'ROOT', color: 'root' } // the model in this tab
 }
 
@@ -50,7 +59,7 @@ export function print(speaker, body, { block = false, scroll = 'always' } = {}) 
     if (block) text.style.display = 'block'
     if (typeof body === 'string') text.textContent = body
     else if (body.html !== undefined) text.innerHTML = body.html
-    else if (body.list) text.append(el('ul', 'help', ...body.list.map((item) => el('li', null, item))))
+    else if (body.list) text.append(el('div', 'help', ...columns(body.list, 3).map((items) => el('ul', null, ...items.map((item) => el('li', null, item))))))
     else text.append(el('span', 'tooltip', body.tooltip), body.text)
 
     const line = el('div', 'content')
@@ -68,7 +77,8 @@ export const say = (body, options) => print(SPEAKERS.fold, body, options)
 
 export const clear = () => output.replaceChildren()
 
-export const link = (href, label) => ({ html: `<a href="${escape(href)}">${escape(label)}</a>` })
+// Links open in a new tab, so the terminal is never navigated away from.
+export const link = (href, label) => ({ html: `<a href="${escape(href)}" target="_blank" rel="noopener">${escape(label)}</a>` })
 
 // Art, a title, the date, and where to start.
 export const banner = (art, title) => ({

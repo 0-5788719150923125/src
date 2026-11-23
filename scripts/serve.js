@@ -6,7 +6,9 @@
 // built file, gets one extra script that polls /__live__ once a second and
 // reloads the page when the build changes. It is an external script so the
 // page's Content-Security-Policy (script-src 'self') still holds. A failed
-// rebuild keeps serving the last good build and prints the error.
+// rebuild keeps serving the last good build and prints the error. Every
+// response carries the headers in the build's _headers file, as it would
+// on Cloudflare Pages.
 
 import fs from 'node:fs'
 import http from 'node:http'
@@ -43,6 +45,28 @@ const LIVE_SCRIPT = `(async () => {
 `
 const LIVE_TAG = '<script src="/__live__.js"></script>'
 
+// The headers the built _headers file (Cloudflare Pages' format) gives a
+// path: a line starting with "/" is a path pattern ("*" matches anything,
+// ":name" one segment), and the indented "Name: value" lines under it are
+// its headers. Read on every request, like the build.
+export function headersFor(out, pathname) {
+    const file = path.join(out, '_headers')
+    if (!fs.existsSync(file)) return []
+    const headers = []
+    let matches = false
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+        if (!line.trim() || line.trim().startsWith('#')) continue
+        if (!/^\s/.test(line)) {
+            const pattern = line.trim().replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/:\w+/g, '[^/]+')
+            matches = new RegExp(`^${pattern}$`).test(pathname)
+        } else if (matches && line.includes(':')) {
+            const at = line.indexOf(':')
+            headers.push([line.slice(0, at).trim(), line.slice(at + 1).trim()])
+        }
+    }
+    return headers
+}
+
 export function serve(out, { host = '127.0.0.1', port = 8000 } = {}) {
     const index = path.join(out, 'index.html')
     let building = null
@@ -64,6 +88,7 @@ export function serve(out, { host = '127.0.0.1', port = 8000 } = {}) {
     const server = http.createServer(async (req, res) => {
         await maybeRebuild()
         const { pathname } = new URL(req.url, 'http://localhost')
+        for (const [name, value] of headersFor(out, pathname)) res.setHeader(name, value)
         if (pathname === '/__live__') return send(res, 200, String(fs.statSync(index).mtimeMs), 'text/plain')
         if (pathname === '/__live__.js') return send(res, 200, LIVE_SCRIPT, TYPES['.js'])
         if (pathname === '/' || pathname === '/index.html') {

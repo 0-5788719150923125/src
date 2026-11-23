@@ -5,4 +5,6 @@
 !containers/node/seed.js
 !containers/node/tracker.js
 !containers/node/webseed.js
+!containers/node/peers.js
 !src/js/room.js
+!src/js/memory.js

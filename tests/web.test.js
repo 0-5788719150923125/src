@@ -1,10 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { seedUrl, tracksOf } from '../src/js/station.js'
+import { dial, rate, seedUrl, stationStats, tracksOf } from '../src/js/station.js'
 import { EXTENSION, chatExtension, createGossip, isPlain, relay, roomFile, sendTo } from '../src/js/room.js'
 import { createStore } from '../src/js/state.js'
 import { buildChain, generateOne } from '../src/js/daemon.js'
-import { schedule } from '../src/js/morse.js'
 import { seededRandom } from '../src/js/random.js'
 import { formatDate } from '../src/js/time.js'
 import { PUBLIC_TRACKERS, loadStations, siteConfig } from '../scripts/build.js'
@@ -140,17 +139,17 @@ test('gossip forgets the oldest ids past its size', () => {
 })
 
 test('the store sets, reads and deletes nested keys, never in place', () => {
-    const store = createStore({ book: 'offline' })
+    const store = createStore({ wire: 'offline' })
     const before = store.snapshot()
     store.set('radio.frequency', '59FM')
     store.set('radio.station', 'x')
     assert.equal(store.get('radio.frequency'), '59FM')
-    assert.deepEqual(before, { book: 'offline' })
+    assert.deepEqual(before, { wire: 'offline' })
     store.delete('radio.frequency')
-    assert.deepEqual(store.snapshot(), { book: 'offline', radio: { station: 'x' } })
+    assert.deepEqual(store.snapshot(), { wire: 'offline', radio: { station: 'x' } })
     store.delete('radio.station')
     store.delete('nothing.here')
-    assert.deepEqual(store.snapshot(), { book: 'offline' })
+    assert.deepEqual(store.snapshot(), { wire: 'offline' })
 })
 
 test('a daemon name depends only on its seed', () => {
@@ -160,16 +159,14 @@ test('a daemon name depends only on its seed', () => {
     assert.match(name, /^[AB]/)
 })
 
-test('morse timing follows its units', () => {
-    // E is one dot: one unit for the letter gap, one before the symbol, one for the dot.
-    assert.deepEqual(schedule('e', 1), [3])
-    assert.equal(schedule('the quick brown fox jumped over a lazy dog').length > 60, true)
-})
 
 test('the build reads stations and the environment', async () => {
     const stations = await loadStations()
-    assert.equal(stations['59'].artist, 'Toehider')
-    const local = siteConfig(stations, {})
+    assert.equal(stations['59.1'].artist, 'Toehider')
+    const plain = siteConfig(stations, {})
+    assert.equal(plain.seed, '')
+    assert.deepEqual(plain.trackers, PUBLIC_TRACKERS)
+    const local = siteConfig(stations, { SRC_SEED_URL: 'http://localhost:8001', SRC_TRACKER_URL: 'ws://localhost:8002' })
     assert.equal(local.seed, 'http://localhost:8001')
     assert.deepEqual(local.trackers, ['ws://localhost:8002', ...PUBLIC_TRACKERS])
     const live = siteConfig(stations, { SRC_SEED_URL: 'https://seed.src.eco/', SRC_TRACKER_URL: 'wss://tracker.src.eco' })
@@ -177,10 +174,86 @@ test('the build reads stations and the environment', async () => {
     assert.equal(live.trackers[0], 'wss://tracker.src.eco')
 })
 
-test('the stack tracker is optional, and deploys keep local addresses out', async () => {
+test('the stack is optional, and deploys keep local addresses out', async () => {
     const stations = await loadStations()
     assert.deepEqual(siteConfig(stations, { SRC_TRACKER_URL: '' }).trackers, PUBLIC_TRACKERS)
-    assert.deepEqual(siteConfig(stations, {}, { deploy: true }).trackers, PUBLIC_TRACKERS)
+    const local = { SRC_SEED_URL: 'http://localhost:8001', SRC_TRACKER_URL: 'ws://localhost:8002' }
+    assert.deepEqual(siteConfig(stations, local, { deploy: true }).trackers, PUBLIC_TRACKERS)
+    assert.equal(siteConfig(stations, local, { deploy: true }).seed, '')
+    assert.equal(siteConfig(stations, { SRC_SEED_URL: 'https://seed.src.eco' }, { deploy: true }).seed, 'https://seed.src.eco')
     const live = siteConfig(stations, { SRC_TRACKER_URL: 'wss://tracker.src.eco' }, { deploy: true })
     assert.equal(live.trackers[0], 'wss://tracker.src.eco')
+})
+
+test('a station\'s ticker numbers have labels and units', () => {
+    assert.equal(dial('59'), '59.0')
+    assert.equal(dial('59.1'), '59.1')
+    assert.equal(dial('88.5'), '88.5')
+    assert.deepEqual([0, 999, 1000, 12345, 1.5e6, -3].map(rate), ['0 B/s', '999 B/s', '1.0 kB/s', '12.3 kB/s', '1.5 MB/s', '0 B/s'])
+    const wires = [{ isSeeder: true }, { isSeeder: false }, {}]
+    assert.deepEqual(stationStats('59', { wires, uploadSpeed: 2048, downloadSpeed: 3.2e6 }), {
+        frequency: '59.0',
+        seeders: 1,
+        peers: 2,
+        up: '2.0 kB/s',
+        down: '3.2 MB/s'
+    })
+})
+
+test('every listener computes the same song and point on the schedule', async () => {
+    const { onAir } = await import('../src/js/station.js')
+    const tracks = ['a', 'b', 'c', 'd'].map((name) => ({ path: `59.1/${name}.mp3` }))
+    const lengths = { '59.1/a.mp3': 100, '59.1/b.mp3': 200, '59.1/c.mp3': 50, '59.1/d.mp3': 150 } // a 500 s loop
+    // In file order, the loop starts at UTC 0: 1,000,120 s is 120 s into a loop.
+    const normal = onAir(tracks, lengths, { mode: 'normal' }, 1_000_120_000)
+    assert.equal(normal.track.path, '59.1/b.mp3')
+    assert.equal(Math.round(normal.offset), 20)
+    assert.equal(normal.ends, 1_000_120_000 + 180_000)
+    // Shuffled: the same on every call, a full permutation, and drawn anew
+    // each time around the loop.
+    const at = (now) => onAir(tracks, lengths, { mode: 'shuffle', seed: '59.1' }, now)
+    assert.deepEqual(at(1_000_120_000), at(1_000_120_000))
+    const order = (round) => {
+        const seen = []
+        for (let t = round * 500_000; t < (round + 1) * 500_000; t += 10_000) {
+            const { track } = at(t)
+            if (seen.at(-1) !== track.path) seen.push(track.path)
+        }
+        return seen
+    }
+    assert.equal(new Set(order(2000)).size, 4)
+    assert.ok([2001, 2002, 2003, 2004].some((round) => order(round).join() !== order(2000).join()))
+    // A song without a length is left out; none at all, no schedule.
+    assert.equal(onAir(tracks, { '59.1/c.mp3': 50 }, {}, 123_456).track.path, '59.1/c.mp3')
+    assert.equal(onAir(tracks, {}, {}, 0), null)
+})
+
+test('a shuffled loop plays every song once, and none soon again across the seam', async () => {
+    const { shuffledLoop } = await import('../src/js/station.js')
+    for (const n of [59, 30, 7, 2, 1]) {
+        const songs = Array.from({ length: n }, (_, i) => ({ path: `59.1/${i}.mp3` }))
+        const spread = Math.min(10, Math.floor(n / 3))
+        let previous = shuffledLoop(songs, '59.1', 999)
+        const orders = new Set()
+        for (let round = 1000; round < 1200; round++) {
+            const order = shuffledLoop(songs, '59.1', round)
+            assert.equal(new Set(order).size, n) // every song, once
+            if (spread) {
+                const tail = new Set(previous.slice(-spread))
+                assert.ok(order.slice(0, spread).every((song) => !tail.has(song)), `n=${n} round=${round}`)
+            }
+            assert.deepEqual(shuffledLoop(songs, '59.1', round), order) // the same on every device
+            orders.add(order.map((song) => song.path).join())
+            previous = order
+        }
+        if (n >= 7) assert.ok(orders.size > 190) // a new order nearly every loop
+    }
+})
+
+test('the ticker prints top-level keys in name order, and leaves what is inside alone', async () => {
+    const { sortedKeys } = await import('../src/js/state.js')
+    const seeding = { frequency: '59.1', seeders: 1, peers: 0, up: '0 B/s', down: '0 B/s' }
+    const shown = sortedKeys({ writer: { download: '0%' }, radio: { frequency: '59.1FM' }, seeding, chat: 'trade', daemon: 'Era' })
+    assert.deepEqual(Object.keys(shown), ['chat', 'daemon', 'radio', 'seeding', 'writer'])
+    assert.deepEqual(Object.keys(shown.seeding), ['frequency', 'seeders', 'peers', 'up', 'down'])
 })

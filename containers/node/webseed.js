@@ -5,8 +5,8 @@
 // also sends its own User-Agent; Firefox lets a page set that header, so
 // the preflight must allow it, while Chromium drops it silently.
 //
-//   /radio/59.torrent    the station's torrent, written by the seeder
-//   /radio/59/<file>     the station's files
+//   /radio/59.1.torrent  the station's torrent, written by the seeder
+//   /radio/59.1/<file>   the station's files
 
 import fs from 'node:fs'
 import http from 'node:http'

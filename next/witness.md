@@ -2,11 +2,13 @@
 
 > Status: **design sketch, one probe run, purpose unresolved** (2026-11-18).
 > Nothing is built. The mechanism holds up; the objective it is pointed at
-> does not - see "The objective is the problem" under Honest unknowns. The
-> probe is [counter_net.mjs](counter_net.mjs); the build order is
-> [roadmap.md](roadmap.md); sources are
-> [evolution_strategies_paper.md](evolution_strategies_paper.md) and
-> [webtorrent.md](webtorrent.md).
+> does not - see "The objective is the problem" under Honest unknowns.
+> Followed by [crawl.md](crawl.md), then [proposal.md](proposal.md).
+> The probe (counter_net.mjs), the roadmap, and the research notes on
+> WebTorrent and on the EGGROLL paper were removed on 2026-11-21; they are
+> in git history at commit 6cd0317. The transport this note asked for was
+> built in v4 (rooms as torrents, chat on BEP 10 wires, radio on
+> torrents).
 
 ## The one line
 
@@ -169,14 +171,15 @@ WebTorrent stays at the edge on purpose. It works, but its recent history is
 automated dependency bumps, and its WebRTC layer rests on a one-maintainer
 fork of an abandoned package. Mutable torrents were never implemented in it,
 so sticky has to be ours either way. Measurements and sources are in
-[webtorrent.md](webtorrent.md).
+the WebTorrent research note (in git history at 6cd0317).
 
 ## What the probe shows
 
-`node next/counter_net.mjs <documents>` simulates the mechanism in
-plain JavaScript: a 33,824-weight encoder over hashed character trigrams, one
-simulated peer per document, records gossiped with random delay and delivered
-in a different order to every peer.
+The probe, `counter_net.mjs` (removed; in git history at 6cd0317),
+simulated the mechanism in plain JavaScript: a 33,824-weight encoder over
+hashed character trigrams, one simulated peer per document, records
+gossiped with random delay and delivered in a different order to every
+peer.
 
 Run on seven stand-in documents (book chapters, design notes, two manual
 pages; chance is 0.143):
@@ -205,7 +208,7 @@ compute; its setting is a trusted, synchronous cluster. SeedFlood (2026)
 floods seed-scalar pairs with no server, over a fixed graph of trusted nodes.
 DeComFL replays missed pairs for late arrivals. One browser implementation of
 EGGROLL exists, in plain JavaScript, single tab. Notes and citations are in
-[evolution_strategies_paper.md](evolution_strategies_paper.md).
+the EGGROLL research note (in git history at 6cd0317).
 
 What differs here: integer counters and sign votes, so the state is order-free
 and every record's pull is bounded; open membership; and an objective scored

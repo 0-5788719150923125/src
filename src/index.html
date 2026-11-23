@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; connect-src *; media-src *">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; connect-src *; media-src * blob:">
         <link rel="shortcut icon" href="favicon.ico">
         <link rel="stylesheet" href="style.css">
         <title>The Source</title>
@@ -12,13 +12,13 @@
     </head>
     <body>
         <div id="container">
-            <div id="pen"><span id="head" class="root"></span><span id="state"></span></div>
+            <div id="pen"><span id="head" class="root"></span><span id="state"><span></span><span aria-hidden="true"></span></span></div>
             <output></output>
             <div id="input-line">
                 <div id="prompt"></div>
-                <input id="command" autofocus>
+                <div id="mirror" aria-hidden="true"><span id="typed"></span><span id="ghost"></span></div>
+                <textarea id="command" rows="1" autofocus spellcheck="false" autocomplete="off" enterkeyhint="send"></textarea>
             </div>
-            <canvas id="void"></canvas>
         </div>
         <script type="module" src="js/main.js"></script>
     </body>

@@ -28,7 +28,9 @@ export function createStore(initial = {}) {
     }
 }
 
-export const state = createStore({ book: 'offline' })
+export const state = createStore()
 
-// The book is open (or closed, when signed) while this tab is in the swarm.
-export const bookIsOpen = () => ['open', 'closed'].includes(state.get('book'))
+// The state as the ticker prints it: top-level keys in name order, so each
+// keeps its place as others come and go. What is inside each stays in the
+// order it was written (the radio's labels, the writer's numbers).
+export const sortedKeys = (data) => Object.fromEntries(Object.entries(data).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))

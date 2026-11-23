@@ -32,7 +32,7 @@ test('ASCII art is not a list', () => {
 
 test('inline marks', () => {
     assert.equal(inline('*it* **bold** ~~gone~~ `x < y`'), '<i>it</i> <b>bold</b> <del>gone</del> <code>x &lt; y</code>')
-    assert.equal(inline('[a link](https://w.org/wiki/F_(p)) ![](assets/a.png)'), '<a href="https://w.org/wiki/F_(p)">a link</a> <img src="assets/a.png" alt="">')
+    assert.equal(inline('[a link](https://w.org/wiki/F_(p)) ![](assets/a.png)'), '<a href="https://w.org/wiki/F_(p)" target="_blank" rel="noopener">a link</a> <img src="assets/a.png" alt="">')
     assert.equal(inline('[INK@CORE]{.core} [[R(1)]]{.missing}'), '<span class="core">INK@CORE</span> <span class="missing">[R(1)]</span>')
     assert.equal(inline('[bird] 2 * 3 * 4 \\*not\\*'), '[bird] 2 * 3 * 4 *not*')
     assert.equal(inline('<u>kept</u> & < 3 &amp;'), '<u>kept</u> &amp; &lt; 3 &amp;')

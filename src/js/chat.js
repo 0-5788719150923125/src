@@ -1,11 +1,17 @@
-// Chat. A focus is a room torrent (room.js); messages cross its wires.
-// There are no servers to keep up and no history: a message reaches whoever
-// is in the room when it is sent, as it always has. Signed messages print
-// in purple, with the sender's public key in a tooltip.
+// Chat. A room is a torrent (room.js); messages cross its wires.
+// There are no servers to keep up: a message reaches whoever is in the room
+// when it is sent, as it always has. Each tab also keeps the lines of the
+// rooms it has been in (library.js), and lends them to
+// the swarm memory, so a room's past can surface as suggestions. Every
+// message is signed by its sender's key (identity.js); unsigned ones are
+// dropped, and the key shows on hover. The writer (writer.js) reads the
+// room's conversation to guess what you will type, and forgets it when you
+// change rooms.
 
-import * as brain from './brain.js'
-import { createBullet } from './bullets.js'
-import { decrypt, encrypt, randomHex, sign, verify } from './crypto.js'
+import * as writer from './writer.js'
+import * as library from './library.js'
+import * as recall from './recall.js'
+import { randomHex, sign, verify } from './crypto.js'
 import { daemonName } from './daemon.js'
 import { signIn, signedIn, you } from './identity.js'
 import { SPEAKERS, banner, clear, handle, print, say, showPrompt } from './print.js'
@@ -13,124 +19,160 @@ import { MAX_LENGTH, chatExtension, createGossip, isPlain, relay, roomFile, send
 import { createSigil } from './sigil.js'
 import { state } from './state.js'
 import { html, t } from './text.js'
-import { announce, destroy, getClient, trackerConnected } from './torrent.js'
+import { announce, destroy, getClient } from './torrent.js'
 
-const DEFAULT_FOCUS = 'trade'
-const SIGIL = 'GhostIsCuteVoidGirl' // seeds the welcome sigil of anyone unsigned
+const DEFAULT_ROOM = 'trade'
 const DAEMON = 'identifier' // localStorage: seeds this browser's daemon name
 
 const session = {
-    online: false,
-    focus: DEFAULT_FOCUS,
-    password: null,
-    room: null,
+    name: DEFAULT_ROOM, // the room's name
+    room: null, // its torrent
     gossip: createGossip()
 }
 
-export const isOnline = () => session.online
-
-// /connect, into the room named in the address (?focus=), or the default.
+// At start: sign in, and join the chat named in the address, or the default.
+// Visitors call a room a chat (/chat, ?chat=, the ticker's `chat`; the
+// user's call, 2026-11-22, after WoW's "trade chat"); the code still says
+// room, and so does the field in each message, so older pages still talk.
 export async function connect() {
-    session.online = true
-    await signIn()
+    // Every message is signed; a browser that cannot sign stays out.
+    if (!(await signIn())) return
     showPrompt(you())
 
-    let seed = localStorage.getItem(DAEMON)
-    if (!seed) localStorage.setItem(DAEMON, (seed = randomHex(64)))
-    state.set('daemon', daemonName(seed))
+    let seed = null
+    try {
+        seed = localStorage.getItem(DAEMON)
+        if (!seed) localStorage.setItem(DAEMON, (seed = randomHex(64)))
+    } catch {}
+    state.set('daemon', daemonName(seed ?? randomHex(64)))
 
     try {
-        await setFocus([new URLSearchParams(window.location.search).get('focus') || DEFAULT_FOCUS])
+        await enter(chatInAddress() || DEFAULT_ROOM)
     } catch (err) {
         console.error(err)
         say(t('chat.failed'))
     }
-    watchStatus()
-    brain.load()
 }
 
-// /focus [name] [password]
-export async function setFocus([name, password]) {
-    if (!name) return say(html('chat.focus'))
-    session.password = password || null
-    session.focus = name.toLowerCase()
-    state.set('focus', session.focus)
-    const url = new URL(window.location.href)
-    url.searchParams.set('focus', session.focus)
-    window.history.pushState({}, '', url)
+// The chat named in the address.
+export const chatInAddress = () => new URLSearchParams(window.location.search).get('chat')
+
+// /chat <name>: a fresh screen, your sigil, and the new chat.
+export async function setChat([name]) {
+    if (!name) return say(html('chat.usage'))
     clear()
-    print(null, banner(await createSigil(signedIn()?.pub ?? SIGIL), t('banner.connected')))
-    await joinRoom(session.focus)
+    const keys = signedIn()
+    if (keys) print(null, banner(await createSigil(keys.pub), t('banner.connected')))
+    await enter(name)
 }
 
-async function joinRoom(focus) {
+async function enter(name) {
+    session.name = name.toLowerCase()
+    state.set('chat', session.name)
+    const url = new URL(window.location.href)
+    url.searchParams.set('chat', session.name)
+    window.history.pushState({}, '', url)
+    writer.forget()
+    await joinRoom(session.name)
+}
+
+async function joinRoom(name) {
     const previous = session.room
     session.room = null
     await destroy(previous)
     const client = await getClient()
-    const torrent = client.seed(roomFile(focus), { announce: announce() })
+    const torrent = client.seed(roomFile(name), { announce: announce() })
     const Chat = chatExtension(receive)
     torrent.on('wire', (wire) => {
         wire.use(Chat)
-        createBullet()
+        recall.attach(wire)
     })
+    recall.use(torrent, name)
     session.room = torrent
 }
 
 // ------------------------------------------------------------ messages
 
-// A message as this tab can read it, or null: opened with the room's
-// password, its signature checked, plain text of a sane length.
+// A message as this tab can read it, or null: its signature checked, plain
+// text of a sane length.
 async function read({ message, pubKey, signature }) {
-    if (typeof message !== 'string') return null
-    if (session.password) message = await decrypt(message, session.password)
-    if (pubKey && !(await verify(pubKey, signature, message))) return null
+    if (typeof message !== 'string' || typeof pubKey !== 'string' || typeof signature !== 'string') return null
+    if (!(await verify(pubKey, signature, message))) return null
     if (message.length > MAX_LENGTH) return null
     message = message.replace(/\n/g, ' ')
-    return message && isPlain(message) ? { message, sender: pubKey || null } : null
+    return message && isPlain(message) ? { message, sender: pubKey } : null
+}
+
+// Flooding. Every peer passes on what it has not seen, so one peer sending
+// too fast would be multiplied across the room. A connection that sends
+// more than WIRE_LIMIT messages a second is not heard past it, and one that
+// sends WIRE_CUTOFF is dropped; a sender's key heard more than SENDER_LIMIT
+// times in SENDER_WINDOW ms is not shown, kept or passed on. Only messages
+// this tab can read and verify are passed on, so forgeries and floods stop
+// at the first peer.
+const WIRE_LIMIT = 20
+const WIRE_CUTOFF = 100
+const SENDER_LIMIT = 10
+const SENDER_WINDOW = 10000
+const heardOn = new WeakMap() // wire -> { at, count }
+const heardFrom = new Map() // sender's key -> times heard, within the window
+
+function wireAllows(wire) {
+    const now = Date.now()
+    const heard = heardOn.get(wire) ?? { at: now, count: 0 }
+    if (now - heard.at >= 1000) Object.assign(heard, { at: now, count: 0 })
+    heardOn.set(wire, heard)
+    if (++heard.count >= WIRE_CUTOFF) wire.destroy()
+    return heard.count <= WIRE_LIMIT
+}
+
+function senderAllows(key) {
+    const now = Date.now()
+    const times = (heardFrom.get(key) ?? []).filter((at) => now - at < SENDER_WINDOW)
+    times.push(now)
+    heardFrom.set(key, times)
+    if (heardFrom.size > 1000) for (const [k, t] of heardFrom) if (now - t.at(-1) >= SENDER_WINDOW) heardFrom.delete(k)
+    return times.length <= SENDER_LIMIT
 }
 
 async function receive(payload, fromWire) {
     if (!session.room || !session.gossip.fresh(payload.id)) return
-    relay(payload, fromWire, session.room.wires)
-    if (payload.focus !== session.focus) return
+    if (!wireAllows(fromWire)) return
+    if (payload.room !== session.name) return
     try {
         const readable = await read(payload)
-        if (!readable) return
+        if (!readable || !senderAllows(readable.sender)) return
+        relay(payload, fromWire, session.room.wires)
         const { message, sender } = readable
-        const speaker = sender ? SPEAKERS.signed : SPEAKERS.fold
-        notify(`${handle(speaker)} ${message}`)
-        if (!session.password) brain.remember(message)
-        const body = sender ? { text: message, tooltip: t('chat.sender', { key: sender }) } : message
-        print(speaker, body, { scroll: 'follow' })
+        notify(`${handle(SPEAKERS.fold)} ${message}`)
+        keep(message)
+        // The sender's key, on hover: who said it, should they need blocking.
+        print(SPEAKERS.fold, { text: message, tooltip: t('chat.sender', { key: sender }) }, { scroll: 'follow' })
     } catch (err) {
         console.warn('Dropped a message that could not be read:', err.message || err)
     }
 }
 
+// The writer reads every line of the room; the library keeps them, and
+// shares them with the swarm.
+function keep(message) {
+    writer.remember(message)
+    library.remember(session.name, message)
+}
+
 export async function send(message) {
-    if (!session.password) brain.remember(message)
     const keys = signedIn()
+    if (!keys) return
+    keep(message)
     const payload = {
         id: randomHex(32),
-        focus: session.focus,
-        message: session.password ? await encrypt(message, session.password) : message,
-        pubKey: keys ? keys.pub : null,
-        signature: keys ? await sign(keys, message) : null
+        room: session.name,
+        message,
+        pubKey: keys.pub,
+        signature: await sign(keys, message)
     }
     session.gossip.fresh(payload.id)
     for (const wire of session.room?.wires ?? []) sendTo(wire, payload)
-}
-
-// ------------------------------------------------------------ status
-
-// The book is open (closed, when signed) while this tab can reach the
-// swarm: a peer in the room, or a tracker that can introduce one.
-function watchStatus() {
-    const { room } = session
-    if (room && (room.wires.length > 0 || trackerConnected(room))) state.set('book', signedIn() ? 'closed' : 'open')
-    else state.set('book', state.get('book') === 'connecting' ? 'offline' : 'connecting')
-    setTimeout(watchStatus, 500)
 }
 
 // ------------------------------------------------------------ notifications

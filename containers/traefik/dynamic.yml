@@ -1,0 +1,30 @@
+# Routes for the stack's `public` profile (compose.yaml): the tracker and
+# the web seed, each on its own hostname, each with a Let's Encrypt
+# certificate. Traefik reads this file itself (its file provider), so it
+# never needs the Docker socket. The hostnames come from TRACKER_HOST and
+# SEED_HOST in .env.
+http:
+  routers:
+    tracker:
+      rule: Host(`{{ env "TRACKER_HOST" }}`)
+      entryPoints: [websecure]
+      service: tracker
+      tls:
+        certResolver: letsencrypt
+    seed:
+      rule: Host(`{{ env "SEED_HOST" }}`)
+      entryPoints: [websecure]
+      service: seed
+      tls:
+        certResolver: letsencrypt
+  services:
+    # WebSocket upgrades pass straight through.
+    tracker:
+      loadBalancer:
+        servers:
+          - url: http://tracker:8002
+    # The web seed answers with its own CORS headers (webseed.js).
+    seed:
+      loadBalancer:
+        servers:
+          - url: http://webseed:8001

@@ -1,0 +1,15 @@
+# Response headers, in Cloudflare Pages' format. The dev server
+# (scripts/serve.js) applies them too.
+#
+# Cross-origin isolation: WebAssembly gets threads, so PEN's model reads a
+# prompt about twice as fast. In exchange, everything the page loads from
+# another origin must allow it: CORS (jsdelivr, Hugging Face and the web
+# seed all send it), or a Cross-Origin-Resource-Policy header.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+
+# /reset fetches this file: no script can clear the browser's HTTP cache,
+# but this header can.
+/reset.txt
+  Clear-Site-Data: "cache"

@@ -1,4 +1,4 @@
-// A focus is a room. Every peer derives the same tiny torrent from the
+// A room is a torrent. Every peer derives the same tiny torrent from the
 // room's name, so they all meet on one info hash through the trackers. Chat
 // rides a BitTorrent extension (BEP 10) on the wires of that torrent: each
 // message is JSON, and every peer forwards what it has not seen before to
@@ -25,9 +25,11 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 // The file a room's torrent is made of. Seeding the same name and bytes
-// yields the same info hash everywhere.
-export const roomFile = (focus) =>
-    new File([encoder.encode(`The Source / focus / ${focus}`)], `src-focus-${focus}`)
+// yields the same info hash everywhere. The bytes still say "focus", what
+// rooms were once called: changing them would move every room to a new
+// info hash.
+export const roomFile = (room) =>
+    new File([encoder.encode(`The Source / focus / ${room}`)], `src-focus-${room}`)
 
 // A wire extension that hands every well-formed message to onMessage.
 export function chatExtension(onMessage) {

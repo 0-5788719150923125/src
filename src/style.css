@@ -4,8 +4,7 @@
   --core: rgb(196, 63, 63); /* red: you, INK@CORE */
   --root: rgb(71, 199, 125); /* green: PEN@ROOT */
   --fold: rgb(66, 150, 228); /* blue: ONE@FOLD, and links */
-  --good: rgb(176, 135, 223); /* purple: anyone who signs */
-  --marquee-x: 0px; /* how far the ticker slides; set by terminal.js */
+  --ghost: rgb(160, 160, 160); /* grey: PEN's guess at the rest of your line */
 }
 
 @font-face {
@@ -68,14 +67,6 @@ img {
   color: var(--fold);
 }
 
-.good {
-  color: var(--good);
-}
-
-.bad {
-  background-color: var(--good);
-}
-
 .missing {
   color: black;
   background-color: white;
@@ -99,22 +90,19 @@ img {
   background-color: black;
 }
 
+/* The state, and a copy of it that follows while it loops (terminal.js). */
 #state {
+  display: inline-block;
   margin-left: 7px;
 }
 
-#state.ticking {
-  position: relative;
-  animation: slide 45s ease-in-out 10s infinite;
+#state > :last-child {
+  display: none;
+  margin-left: 4ch;
 }
 
-@keyframes slide {
-  from {
-    left: 0;
-  }
-  to {
-    left: var(--marquee-x);
-  }
+#state.ticking > :last-child {
+  display: inline;
 }
 
 /* ------------------------------------------------------------ output */
@@ -168,10 +156,14 @@ output pre {
 }
 
 /* /help */
+/* /help's list, in columns of balanced length (print.js). */
 .help {
-  column-width: 0.5em;
-  column-count: 3;
+  display: flex;
   width: 25em;
+}
+
+.help ul {
+  flex: 1;
   margin: 0;
   padding: 0;
   list-style-type: none;
@@ -186,37 +178,96 @@ output pre {
 
 /* ------------------------------------------------------------ command line */
 
+/* The command line wraps, as a terminal's does: the prompt sits at the
+   start of the first line and long lines run on under it. A mirror holds
+   the same text, unseen, with the ghost after it; the mirror gives the line
+   its height, and the textarea lies over it, so both wrap alike and the
+   ghost starts where the typed text ends. --indent is the prompt's width
+   (terminal.js). */
 #input-line {
-  display: flex;
+  position: relative;
   clear: both;
 }
 
 #prompt {
-  flex: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: pre;
+}
+
+#mirror,
+#command {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  text-indent: var(--indent, 0px);
+}
+
+#mirror {
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Keeps a line's height when the line is empty. */
+#mirror::after {
+  content: '\200b';
+}
+
+#typed {
+  color: transparent;
 }
 
 #command {
-  flex: 1;
-  min-width: 0;
-  margin: 0 0 0 7px;
-  padding: 0;
-  border: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  overflow: hidden;
   outline: none;
-  font: inherit;
   color: inherit;
   background-color: transparent;
 }
 
-/* ------------------------------------------------------------ the void */
+/* The guess at the rest of the line (ghost.js), after the typed text in the
+   mirror. */
+#ghost {
+  color: var(--ghost);
+  /* Now and then a wave of fading runs along the guess, left to right, to
+     show it is live. The mask is three times the guess's width; sliding it
+     carries the faded middle across, then it rests. */
+  mask-image: linear-gradient(90deg, #000 40%, rgba(0, 0, 0, 0.2) 50%, #000 60%);
+  mask-size: 300% 100%;
+  mask-position: 100% 0;
+  animation: wave 3s linear infinite;
+}
 
-/* Behind everything: a bullet for every peer that connects (bullets.js). */
-#void {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+@keyframes wave {
+  0% {
+    mask-position: 100% 0;
+  }
+  60%,
+  100% {
+    mask-position: 0% 0;
+  }
+}
+
+/* No wave while there is nothing to show: an animation runs every frame. */
+#ghost:empty {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ghost {
+    animation: none;
+  }
 }
 
 /* ------------------------------------------------------------ the atom */
@@ -247,12 +298,16 @@ output pre {
   animation: shine 2s infinite linear;
 }
 
+/* Each orbit sets how long its electron takes to go round (--spin) and
+   where in the round it starts (--lag); the electron and its trail share
+   both, so the trail cannot fall behind. */
 .orbit {
+  --spin: 3s;
+  --lag: 0s;
   width: 5em;
   height: 5em;
   border: 0;
   transform-style: preserve-3d;
-  animation: trace 3s infinite linear;
 }
 
 .orbit::before {
@@ -264,6 +319,19 @@ output pre {
   border-radius: 50%;
 }
 
+/* The trail: a thin ring, bright at the electron and fading out a third of
+   the way round behind it, turning with it. The gradient's bright end
+   starts where the electron does (90deg, three o'clock). */
+.orbit::after {
+  content: ' ';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 90deg, transparent 0deg, transparent 240deg, rgba(255, 255, 255, 0.6) 360deg);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 0.14em), #000 calc(100% - 0.1em));
+  animation: trail var(--spin) var(--lag) infinite linear;
+}
+
 .orbit .electron {
   position: relative;
   top: 2.3em;
@@ -273,17 +341,12 @@ output pre {
   box-shadow: 0 0 30px #fff;
   border-radius: 75%;
   transform: translateX(100px);
-  animation: revolve 3s infinite linear;
+  animation: revolve var(--spin) var(--lag) infinite linear;
 }
 
 .orbit:nth-child(2) {
+  --spin: 1s;
   transform: rotateY(65deg) rotateX(-54deg);
-  animation-delay: -1s;
-  animation-duration: 1s;
-}
-
-.orbit:nth-child(2) .electron {
-  animation-duration: 1s;
 }
 
 .orbit:nth-child(3) {
@@ -291,12 +354,8 @@ output pre {
 }
 
 .orbit:nth-child(4) {
+  --lag: -1s;
   transform: rotateY(65deg) rotateX(5deg);
-  animation-delay: -1s;
-}
-
-.orbit:nth-child(4) .electron {
-  animation-delay: -1s;
 }
 
 @keyframes revolve {
@@ -308,22 +367,9 @@ output pre {
   }
 }
 
-@keyframes trace {
-  0% {
-    border: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.5);
-  }
-  35% {
-    border: 0;
-    border-right: 1px solid rgba(255, 255, 255, 0.5);
-  }
-  70% {
-    border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
-  }
-  100% {
-    border: 0;
-    border-left: 1px solid rgba(255, 255, 255, 0.5);
+@keyframes trail {
+  to {
+    transform: rotate(360deg);
   }
 }
 

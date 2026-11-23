@@ -2,8 +2,9 @@
 
 > Status: **raw capture, two probes** (2026-11-18). Nothing is built.
 > Supersedes the objective in [witness.md](witness.md) and keeps its
-> counters. The probe is [crawl.mjs](crawl.mjs); the earlier one is
-> [counter_net.mjs](counter_net.mjs) with `WAVE` set.
+> counters. The probes, `crawl.mjs` and the earlier `counter_net.mjs` with
+> `WAVE` set, were removed on 2026-11-21 (in git history at commit
+> 6cd0317). Followed by [proposal.md](proposal.md).
 
 ## The one line
 
@@ -48,7 +49,7 @@ not keep up at all. Both results said the steps have to come from the data.
 
 ### Steps taken from the data can
 
-`node next/crawl.mjs <corpus.bin>`. The corpus is 4,484 prose documents of
+The probe was `crawl.mjs`. The corpus is 4,484 prose documents of
 4 KiB from MiniPile, standing in for FineWeb, which was not on disk. 800 are
 held out and never read. Each of 128 peers takes one document as its
 signature. The other 3,556 are the library.
@@ -197,7 +198,7 @@ From memory, not checked against sources.
 
 ## Cheapest next probe
 
-Two changes to crawl.mjs, each a few lines:
+Two changes to the probe (crawl.mjs, in git history), each a few lines:
 
 - **A reference that does not collapse.** Until one exists, the gain to aim
   for is unknown. Keep the columns apart while pulling same-document passages

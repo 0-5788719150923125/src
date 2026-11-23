@@ -49,9 +49,5 @@ async function startServer() {
     }
 }
 
-// Whether any tracker socket of this torrent is open.
-export const trackerConnected = (torrent) =>
-    Boolean(torrent?.discovery?.tracker?._trackers?.some((t) => t.socket && t.socket.connected))
-
 export const destroy = (torrent) =>
     new Promise((resolve) => (torrent && !torrent.destroyed ? torrent.destroy({}, resolve) : resolve()))
