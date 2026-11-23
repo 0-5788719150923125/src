@@ -341,10 +341,13 @@ async function play(mine, torrent, program, played) {
     else file.once('done', upNext)
     const server = await getServer()
     if (mine !== session) return
-    // Without streaming (no service worker; a hard reload bypasses it):
-    // straight from the web seed or the mirror over HTTP, which starts at
-    // once, while the torrent still fetches the song to keep; else the
-    // whole song first, then play (a blob: URL, which the CSP allows).
+    // Without streaming (no service worker): straight from the web seed or
+    // the mirror over HTTP, which starts at once, while the torrent still
+    // fetches the song to keep; else the whole song first, then play (a
+    // blob: URL, which the CSP allows). The mirror is called in for it: a
+    // whole song from peers can take long, or never come (a tab back from
+    // suspension can hold connections that are dead).
+    if (!server && !torrent.webSeed) callMirror(torrent)
     if (server) file.streamTo(audio)
     else if (torrent.webSeed) audio.src = seedUrl(config.seed, track.path)
     else if (torrent.mirror) audio.src = mirrorUrl(torrent, track.path)

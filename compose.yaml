@@ -10,6 +10,9 @@ name: src
 #             handshakes (WebSocket, port 8002). Optional: public trackers
 #             do the same job; this one is redundancy you control
 #   seeder    seeds every station as a torrent, and relays chat
+#   library   peers that remember the prose and code of git repositories
+#             (PEER_SOURCES), and answer the ghost text's memory questions
+#             in the chats; public profile
 #   webseed   serves the station folders over HTTP (port 8001), so a
 #             browser that cannot reach any peer still plays the radio
 #   tunnel    optional: publishes the tracker and the web seed through a
@@ -67,7 +70,7 @@ services:
       TRACKERS: ws://${BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-8002}
       # Written into every .torrent file.
       ANNOUNCE: ${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
-      ROOMS: ${ROOMS:-trade}
+      CHATS: ${CHATS:-trade}
       # WebRTC's UDP ports, and an upload cap in KiB/s (seed.js).
       WEBRTC_PORTS: ${WEBRTC_PORTS:-51000-51999}
       UPLOAD_LIMIT: ${UPLOAD_LIMIT:-0}
@@ -115,12 +118,47 @@ services:
       TRACKERS: ws://tracker:8002,${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
       PEERS: ${PEERS:-8}
       PEER_DATA: ${PEER_DATA:-tinystories}
-      PEER_ROOM: ${PEER_ROOM:-memorytest}
+      PEER_CHATS: ${PEER_CHATS:-memorytest}
       PEER_DROP: ${PEER_DROP:-0}
       PEER_DELAY: ${PEER_DELAY:-0}
       DATA_DIR: /data
     volumes:
       - peers:/data
+
+  # The library: peers that remember the prose and code of the git
+  # repositories in PEER_SOURCES (cloned into the `library` volume, read
+  # again every PEER_REFRESH hours) and answer the ghost text's memory
+  # questions in the chats the seeder relays (CHATS), each answer counting
+  # PEER_WEIGHT (0 to 1; a person's own counts 1). Like the seeder, it is on
+  # the host's network so browsers anywhere reach it, with its own UDP range
+  # (PEER_WEBRTC_PORTS) to open in the firewalls. With no sources it idles.
+  library:
+    <<: [*app, *node]
+    profiles: [public]
+    command: [node, peers.js]
+    network_mode: host
+    depends_on:
+      tracker:
+        condition: service_healthy
+    environment:
+      PEER_DATA: git
+      PEER_SOURCES: ${PEER_SOURCES:-}
+      PEER_CHATS: ${CHATS:-trade}
+      PEER_WEIGHT: ${PEER_WEIGHT:-1}
+      PEER_REFRESH: ${PEER_REFRESH:-24}
+      PEER_MB: ${PEER_MB:-2}
+      PEERS: ${LIBRARY_PEERS:-0}
+      TRACKERS: ws://${BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-8002},${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
+      WEBRTC_PORTS: ${PEER_WEBRTC_PORTS:-52000-52999}
+      DATA_DIR: /data
+    volumes:
+      - library:/data
+    healthcheck:
+      test: [CMD, node, -e, "process.exit(Date.now() - Number(require('fs').readFileSync('/tmp/alive', 'utf8')) < 90000 ? 0 : 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15m
 
   # TLS on a public server: Traefik in front of the tracker and the web seed,
   # with certificates from Let's Encrypt. It uses the TLS-ALPN challenge, so
@@ -175,4 +213,5 @@ services:
 volumes:
   torrents:
   peers:
+  library:
   certificates:

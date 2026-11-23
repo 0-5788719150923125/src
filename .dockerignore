@@ -6,5 +6,7 @@
 !containers/node/tracker.js
 !containers/node/webseed.js
 !containers/node/peers.js
+!containers/node/sources.js
+!containers/node/webrtc.js
 !src/js/room.js
 !src/js/memory.js

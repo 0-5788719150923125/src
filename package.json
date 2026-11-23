@@ -25,7 +25,7 @@
     "stack:wipe": "docker compose --profile test --profile tunnel --profile public down --volumes",
     "tunnel": "docker compose --profile tunnel up -d",
     "public": "docker compose --profile public up -d --build",
-    "public:logs": "docker compose --profile public logs -f --tail 100 traefik seeder",
+    "public:logs": "docker compose --profile public logs -f --tail 100 traefik seeder library",
     "peers": "docker compose --profile test up -d --build peers",
     "peers:quijote": "PEER_DATA=quijote docker compose --profile test up -d --build --force-recreate peers",
     "peers:logs": "docker compose logs -f --tail 100 peers",

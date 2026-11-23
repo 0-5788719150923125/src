@@ -69,8 +69,10 @@ export function load() {
     // before they can say how the download is going.
     state.set('writer', { download: '0%' })
     start()
-    // A touchscreen has no Tab key; there, the ghost is taken by a tap.
-    say(matchMedia('(pointer: coarse)').matches ? t('pen.info-touch') : t('pen.info'))
+    // Said once the model can guess, not before: until then the ticker
+    // shows the download. A touchscreen has no Tab key; there, the ghost is
+    // taken by a tap.
+    whenReady.then(() => say(matchMedia('(pointer: coarse)').matches ? t('pen.info-touch') : t('pen.info')))
 }
 
 function start(threads = 0) {

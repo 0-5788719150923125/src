@@ -1,5 +1,6 @@
 // One WebTorrent client for the whole page, loaded on first use. Chat rooms
-// and radio stations are torrents in it. The service worker (sw.js) lets
+// and radio stations are torrents in it. The service worker (src/sw.js,
+// around WebTorrent's) lets
 // audio stream straight out of a torrent into an <audio> element.
 
 import { config } from './config.js'
@@ -21,7 +22,8 @@ async function startClient() {
 export const announce = () => config.trackers
 
 // The streaming server, or null where service workers are unavailable (for
-// example, some private windows). Callers fall back to the web seed. The
+// example, some private windows). The radio then plays over HTTP, from the
+// web seed or the mirror. The
 // first call starts it; a caller can start it early, while a torrent loads.
 export const getServer = () => (serving ??= startServer())
 
@@ -34,17 +36,19 @@ async function startServer() {
                 worker.addEventListener('statechange', () => worker.state === 'activated' && resolve())
             )
         }
-        // On a first visit the worker claims the page just after it
-        // activates; audio requests only reach it once it controls the page.
+        // Audio requests only reach the worker once it controls the page. On
+        // a first visit it claims the page as it activates; a page loaded
+        // without it (a hard reload, a restored tab) asks to be claimed.
         if (!navigator.serviceWorker.controller) {
             await new Promise((resolve, reject) => {
                 navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+                registration.active?.postMessage('claim')
                 setTimeout(() => reject(new Error('service worker never took control')), 5000)
             })
         }
         return (await getClient()).createServer({ controller: registration })
     } catch (err) {
-        console.warn('streaming unavailable, using the web seed:', err.message || err)
+        console.warn('streaming unavailable, playing over HTTP:', err.message || err)
         return null
     }
 }

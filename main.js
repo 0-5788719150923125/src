@@ -46,7 +46,7 @@ const { values: args } = parseArgs({
 if (args.help) {
     console.log(`usage: node main.js [--build | --test | --deploy | --undeploy [--yes]]
                     [--port N] [--host ADDR] [--out DIR] [--project NAME] [--domain NAME]
-       node main.js --peers N [--data tinystories|quijote|FILE] [--chat NAME]
+       node main.js --peers N [--data tinystories|quijote|git|FILE] [--chat NAME]
 
   (no flag)   build, then serve at http://localhost:8000 with live reload;
               restarts itself when main.js, scripts/ or .env change
@@ -79,8 +79,8 @@ or run them in the stack: PEERS=${args.peers} PEER_DATA=${args.data} docker comp
     const env = {
         ...process.env,
         PEERS: args.peers,
-        PEER_DATA: ['tinystories', 'quijote'].includes(args.data) ? args.data : path.resolve(args.data),
-        PEER_ROOM: args.chat,
+        PEER_DATA: ['tinystories', 'quijote', 'git'].includes(args.data) ? args.data : path.resolve(args.data),
+        PEER_CHATS: args.chat,
         TRACKERS: trackerList().join(','),
         DATA_DIR: path.join(ROOT, 'data', 'peers'),
         ROOM_JS: path.join(ROOT, 'src', 'js', 'room.js'),

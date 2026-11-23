@@ -89,10 +89,12 @@ npm run public:logs     # follow Traefik (certificates, routing)
 
 On a server of your own, the stack can serve the tracker and the web seed over TLS itself: Traefik sits in front of them and gets certificates from Let's Encrypt. Browsers need it: a page served over HTTPS can only reach a tracker at `wss://` and a web seed at `https://`. The seeder needs no certificate, since WebRTC encrypts its own connections.
 
-1. Point two hostnames at the server, for example `tracker.src.eco` and `seed.src.eco`, and open TCP ports 80 and 443, and UDP ports 51000-51999 (`WEBRTC_PORTS`) for the seeder's WebRTC connections, in the server's firewall and in the cloud provider's.
-2. In the server's `.env`, set `TRACKER_HOST`, `SEED_HOST`, and optionally `ACME_EMAIL` (see [.env.example](.env.example)). While trying it out, set `ACME_CA` to Let's Encrypt's staging server, which has no rate limits.
+1. Point two hostnames at the server, for example `tracker.src.eco` and `seed.src.eco`, and open TCP ports 80 and 443, and UDP ports 51000-51999 (`WEBRTC_PORTS`, the seeder) and 52000-52999 (`PEER_WEBRTC_PORTS`, the library), in the server's firewall and in the cloud provider's. Copy the station folders over (`STATION_59_1`).
+2. In the server's `.env`, set `TRACKER_HOST`, `SEED_HOST`, and optionally `ACME_EMAIL` (see [.env.example](.env.example)). While trying it out, set `ACME_CA` to Let's Encrypt's staging server, which has no rate limits. For the library, list git repositories in `PEER_SOURCES`.
 3. `npm run public`. Traefik asks for the certificates on its first start, and renews them itself. They are kept in the `certificates` volume. The seeder runs on the host's network, so browsers behind any NAT reach it at the server's address, with no TURN relay. `UPLOAD_LIMIT` caps its upload.
-4. Build the site against it: in `.env` where you deploy from, `SRC_TRACKER_URL=wss://tracker.src.eco` and `SRC_SEED_URL=https://seed.src.eco`.
+4. Build the site against it: in `.env` where you deploy from, `SRC_TRACKER_URL=wss://tracker.src.eco`; with more servers, list their trackers in `SRC_TRACKERS` too. `SRC_SEED_URL=https://seed.src.eco` adds the web seed, though the R2 mirror already backs the radio.
+
+The library: with `PEER_SOURCES` set, the stack's `library` service clones those repositories, reads their prose and code, and answers the ghost text's memory questions in the chats in `CHATS`, so what they hold steers what visitors are offered. `PEER_WEIGHT` (0 to 1) sets how much its answers count against a visitor's own. Each server votes on its own, so give servers different sources, or a lower weight.
 
 The routes are in [containers/traefik/dynamic.yml](containers/traefik/dynamic.yml). Traefik reads them from that file, so it never needs the Docker socket. The Cloudflare Tunnel (`npm run tunnel`) is the other way to publish the stack, with no open ports at all.
 
@@ -113,6 +115,6 @@ npm run peers:local     # without Docker: node main.js --peers 8
 # then open http://localhost:8000/?chat=memorytest
 ```
 
-With Don Quijote, try typing "En un lugar de la Mancha, de cuyo". `PEERS`, `PEER_DATA` and `PEER_ROOM` in `.env` change how many there are, what they remember, and where.
+With Don Quijote, try typing "En un lugar de la Mancha, de cuyo". `PEERS`, `PEER_DATA` and `PEER_CHATS` in `.env` change how many there are, what they remember, and where.
 
 </details>
