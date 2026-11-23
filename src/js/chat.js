@@ -19,7 +19,7 @@ import { MAX_LENGTH, chatExtension, createGossip, isPlain, relay, roomFile, send
 import { createSigil } from './sigil.js'
 import { state } from './state.js'
 import { html, t } from './text.js'
-import { announce, destroy, getClient } from './torrent.js'
+import { announce, destroy, getChatClient } from './torrent.js'
 
 const DEFAULT_ROOM = 'trade'
 const DAEMON = 'identifier' // localStorage: seeds this browser's daemon name
@@ -80,7 +80,7 @@ async function joinRoom(name) {
     const previous = session.room
     session.room = null
     await destroy(previous)
-    const client = await getClient()
+    const client = await getChatClient()
     const torrent = client.seed(roomFile(name), { announce: announce() })
     const Chat = chatExtension(receive)
     torrent.on('wire', (wire) => {

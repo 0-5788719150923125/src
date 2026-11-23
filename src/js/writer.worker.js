@@ -35,6 +35,15 @@ const CHUNK = 32
 const BUDGET = 120
 const LENGTH = 64
 const PENALTY = 1.3
+// How the next token is chosen: drawn, not always the likeliest, so a line
+// that starts like another need not go on like it (the user's call,
+// 2026-11-23: every "The" got the same guess). TEMPERATURE flattens the
+// model's odds a little less than evenly (1 would draw by them as they
+// are, 0 would be greedy), and the draw is only ever among the likeliest
+// tokens holding TOP_P of the probability. A guess is kept while the
+// visitor types along with it; only a new guess draws again.
+const TEMPERATURE = 0.7
+const TOP_P = 0.9
 // Tokens between questions to the room's memory while a guess is written.
 const ASK_EVERY = 4
 const ASK_WAIT = 200 // ms to wait for the room's answer before writing on
@@ -269,7 +278,7 @@ async function guess(id, line, stopped, memory) {
         // token ends the line, and a guess of nothing shows nothing and is
         // never retried (the visitor saw the ghost freeze).
         const blank = shown === 0 || !/\S/.test(written)
-        const token = pick(scores, { vocab, allowed: blank ? words : allowed, stops: blank ? none : stops, pending, recent, penalty: PENALTY, boost, lambda })
+        const token = pick(scores, { vocab, allowed: blank ? words : allowed, stops: blank ? none : stops, pending, recent, penalty: PENALTY, boost, lambda, temperature: TEMPERATURE, topP: TOP_P })
         if (token < 0 || stops[token]) break
         if (shown >= BUDGET && /^\s/.test(vocab[token])) {
             why = 'length'

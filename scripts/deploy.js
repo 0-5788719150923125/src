@@ -23,6 +23,8 @@
 //   CLOUDFLARE_PAGES_PRODUCTION_BRANCH=main  optional
 //   CLOUDFLARE_R2_BUCKET=src-radio           optional: the radio's mirror
 //   CLOUDFLARE_R2_DOMAIN=radio.src.eco       (both, or neither; mirror.js)
+//   CLOUDFLARE_TURN=off                      optional: no chat relay (turn.js)
+//   CLOUDFLARE_TURN_CAP_GB=800               the relay's monthly cap
 //
 // Careful with the project: a deploy replaces everything a project serves.
 // Both directions refuse a project that serves a custom domain other than
@@ -48,7 +50,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import readline from 'node:readline/promises'
+import { fileURLToPath } from 'node:url'
 import { mirrorSettings, mirrorTeardown, syncMirror } from './mirror.js'
+import { disableTurn, ensureTurn, turnSettings, turnTeardown } from './turn.js'
+
+// wrangler runs here, so it finds functions/ (the site's Pages Functions).
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const API = 'https://api.cloudflare.com/client/v4'
 export const DEFAULT_PROJECT = 'src-eco'
@@ -337,11 +344,22 @@ export async function deploy(out, { project = DEFAULT_PROJECT, domain } = {}) {
     // Its trouble never fails a deploy: peers still carry the radio.
     const mirror = mirrorSettings()
     if (mirror) await syncMirror(out, mirror)
+    // The chat's relay, set in the project's variables before the upload so
+    // this deployment has them. Its trouble never fails a deploy either:
+    // chat still connects directly.
+    const relay = turnSettings()
+    try {
+        const { token, account } = credentials('deploy')
+        if (relay) await ensureTurn(account, project, token, relay)
+        else await disableTurn(account, project, token)
+    } catch (err) {
+        log(`WARNING: the chat relay is not set up (${err.message}); chat connects directly only`)
+    }
     log(`uploading ${out} to '${project}' (branch '${branch}' -> ${target})...`)
     const result = spawnSync(
         wrangler[0],
         [...wrangler.slice(1), 'pages', 'deploy', out, '--project-name', project, '--branch', branch, '--commit-dirty=true'],
-        { env: process.env, encoding: 'utf8', timeout: 600000 }
+        { cwd: ROOT, env: process.env, encoding: 'utf8', timeout: 600000 }
     )
     if (result.status !== 0) {
         log(`upload failed (exit ${result.status}): ${(result.stderr || '').trim().slice(0, 500)}`)
@@ -399,7 +417,7 @@ async function deleteProject(account, project, token) {
 
 // Take down what deploy() set up: the custom domain, its CNAME, its cache
 // rule, the
-// project with every deployment, and the radio's mirror. Shows the plan and asks first, unless `yes`.
+// project with every deployment, the radio's mirror, and the chat's relay. Shows the plan and asks first, unless `yes`.
 export async function undeploy({ project = DEFAULT_PROJECT, domain, yes = false } = {}) {
     domain = (domain || process.env.CLOUDFLARE_PAGES_DOMAIN || '').trim()
     const creds = credentials('undeploy')
@@ -428,6 +446,7 @@ export async function undeploy({ project = DEFAULT_PROJECT, domain, yes = false 
         const cacheRule = findCacheRule(rules, domain)
         const mirror = mirrorSettings()
         const teardown = mirror ? await mirrorTeardown(mirror) : { plan: [], run: async () => {} }
+        const relay = await turnTeardown(account, project, token)
 
         const plan = []
         if (attached) plan.push(`detach ${domain} from '${project}'`)
@@ -439,7 +458,7 @@ export async function undeploy({ project = DEFAULT_PROJECT, domain, yes = false 
         if (ours && apex) log(`leaving the CNAME ${domain} -> ${cname.content} alone: it is the root of the zone`)
         if (cacheRule) plan.push(`delete the cache rule for ${domain}`)
         if (info) plan.push(`delete the Pages project '${project}' (${info.subdomain}) and all its deployments`)
-        plan.push(...teardown.plan)
+        plan.push(...teardown.plan, ...relay.plan)
         if (cname && !ours) log(`leaving the CNAME ${domain} -> ${cname.content} alone: it is not this project's`)
         if (!plan.length) {
             log(`nothing to undeploy: no project '${project}'${domain ? ` and no CNAME of its own at ${domain}` : ''}`)
@@ -466,6 +485,7 @@ export async function undeploy({ project = DEFAULT_PROJECT, domain, yes = false 
         }
         if (info) await deleteProject(account, project, token)
         await teardown.run()
+        await relay.run()
         log('undeployed')
         return true
     } catch (err) {

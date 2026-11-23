@@ -8,12 +8,25 @@
 // page's Content-Security-Policy (script-src 'self') still holds. A failed
 // rebuild keeps serving the last good build and prints the error. Every
 // response carries the headers in the build's _headers file, as it would
-// on Cloudflare Pages.
+// on Cloudflare Pages. Pages Functions (functions/, so far /api/turn) run
+// here too, with their variables from the environment (TURN_KEY_ID and the
+// rest; unset, the relay is off, as on a deploy without it).
 
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
-import { build, newestInput } from './build.js'
+import { pathToFileURL } from 'node:url'
+import { ROOT, build, newestInput } from './build.js'
+
+const FUNCTIONS = { '/api/turn': 'functions/api/turn.js' }
+
+// A Pages Function's GET handler, called with a Request and the environment.
+async function runFunction(file, req, res) {
+    const { onRequestGet } = await import(pathToFileURL(path.join(ROOT, file)).href)
+    const request = new Request(new URL(req.url, `http://${req.headers.host}`), { headers: req.headers })
+    const response = await onRequestGet({ request, env: process.env })
+    res.writeHead(response.status, Object.fromEntries(response.headers)).end(Buffer.from(await response.arrayBuffer()))
+}
 
 const TYPES = {
     '.html': 'text/html; charset=utf-8',
@@ -91,6 +104,10 @@ export function serve(out, { host = '127.0.0.1', port = 8000 } = {}) {
         for (const [name, value] of headersFor(out, pathname)) res.setHeader(name, value)
         if (pathname === '/__live__') return send(res, 200, String(fs.statSync(index).mtimeMs), 'text/plain')
         if (pathname === '/__live__.js') return send(res, 200, LIVE_SCRIPT, TYPES['.js'])
+        if (FUNCTIONS[pathname]) {
+            if (req.method !== 'GET') return send(res, 405, 'method not allowed', 'text/plain')
+            return runFunction(FUNCTIONS[pathname], req, res).catch((err) => send(res, 500, err.message, 'text/plain'))
+        }
         if (pathname === '/' || pathname === '/index.html') {
             const html = fs.readFileSync(index, 'utf8').replace('</body>', `${LIVE_TAG}\n</body>`)
             return send(res, 200, html, TYPES['.html'])

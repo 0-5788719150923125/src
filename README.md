@@ -52,7 +52,7 @@ node main.js            # dev server at http://localhost:8000
 node main.js --build    # build into build/site/
 node main.js --test     # run the tests
 node main.js --deploy   # publish to Cloudflare Pages
-node main.js --undeploy # take it down again: project, domain, DNS, mirror (asks first)
+node main.js --undeploy # take it down again: project, domain, DNS, mirror, relay (asks first)
 node main.js --peers 8  # test peers that remember children's stories (see below)
 npm run rules           # how the quality rules score their examples; --fit, or a "line"
 ```
@@ -96,11 +96,17 @@ On a server of your own, the stack can serve the tracker and the web seed over T
 
 The library: with `PEER_SOURCES` set, the stack's `library` service clones those repositories, reads their prose and code, and answers the ghost text's memory questions in the chats in `CHATS`, so what they hold steers what visitors are offered. `PEER_WEIGHT` (0 to 1) sets how much its answers count against a visitor's own. Each server votes on its own, so give servers different sources, or a lower weight.
 
+No public server? The seeder and the library can run at home behind Proton VPN instead, each on its own connection's forwarded port (`WEBRTC_PORT_FILE`, read from gluetun), which browsers behind any NAT reach with nothing opened on your router. Run each in its VPN container's network (`network_mode: service:<vpn>`), with that container's port file mounted.
+
 The routes are in [containers/traefik/dynamic.yml](containers/traefik/dynamic.yml). Traefik reads them from that file, so it never needs the Docker socket. The Cloudflare Tunnel (`npm run tunnel`) is the other way to publish the stack, with no open ports at all.
 
 ## the mirror
 
 With no peer around, the radio can fall back to a mirror: the stations' files in a Cloudflare R2 bucket, at a domain of its own. Set `CLOUDFLARE_R2_BUCKET` and `CLOUDFLARE_R2_DOMAIN` in `.env` (see [.env.example](.env.example)), and the deploy creates the bucket and uploads what it lacks, after checking each station folder against its `.torrent`. A browser calls the mirror in only when no peer turns up within 6 seconds, or a song does not start or stalls, and lets it go once a song has arrived while peers are around. What the mirror sends is checked against the `.torrent` and kept and seeded like anything else, so each listener it serves becomes one more peer. R2 charges nothing for downloads; storage is free up to 10 GB.
+
+## the relay
+
+Two browsers behind strict NATs, such as a phone on a cellular network, cannot connect to each other directly, so the deploy also sets up a relay for chat: Cloudflare's TURN service. A connection is tried directly first and goes through the relay only when nothing else works. The site's `/api/turn` function hands out credentials that last an hour, and stops handing them out once the account's TURN traffic this month reaches `CLOUDFLARE_TURN_CAP_GB` (800 GB by default, under Cloudflare's free 1,000 GB), so it stays within the free allowance, give or take the hour of relaying after the cap. The radio never uses it. `CLOUDFLARE_TURN=off` turns it off; see [.env.example](.env.example).
 
 ## test peers
 

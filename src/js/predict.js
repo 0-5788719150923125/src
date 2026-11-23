@@ -37,13 +37,19 @@ export function consume(pending, piece) {
     return { pending: pending.slice(piece.length), shown: '' }
 }
 
-// The next token: the likeliest one that the chat would accept or that ends
-// the line (a stop), agreeing with any unfinished text, with the tokens
-// already in the line made less likely so the guess does not repeat itself.
-// With a `boost` from the swarm's memory (token -> share, see boostFrom),
-// the model's probabilities are blended with it, `lambda` to the memory.
-// -1 when nothing fits.
-export function pick(logits, { vocab, allowed, stops, pending = '', recent = new Set(), penalty = 1, boost = null, lambda = 0 }) {
+// The next token, among those the chat would accept or that end the line
+// (a stop), agreeing with any unfinished text, with the tokens already in
+// the line made less likely so the guess does not repeat itself. With a
+// `boost` from the swarm's memory (token -> share, see boostFrom), the
+// model's probabilities are blended with it, `lambda` to the memory.
+//
+// With no `temperature` it takes the likeliest (greedy: the same line
+// always gets the same guess). With one, it draws: the model's scores are
+// divided by the temperature before the blend, and the draw is among the
+// likeliest tokens that together hold `topP` of the probability (nucleus
+// sampling), so it varies without wandering into the unlikely tail.
+// `random` returns [0, 1). -1 when nothing fits.
+export function pick(logits, { vocab, allowed, stops, pending = '', recent = new Set(), penalty = 1, boost = null, lambda = 0, temperature = 0, topP = 1, random = Math.random }) {
     const scores = new Float32Array(logits.length)
     let best = -1
     let top = -Infinity
@@ -60,19 +66,38 @@ export function pick(logits, { vocab, allowed, stops, pending = '', recent = new
             best = id
         }
     }
-    if (!boost?.size || !lambda || best < 0) return best
+    const blend = boost?.size && lambda
+    if (best < 0 || (!blend && !(temperature > 0))) return best
+    const t = temperature > 0 ? temperature : 1
     let sum = 0
-    for (let id = 0; id < scores.length; id++) if (scores[id] > -Infinity) sum += Math.exp(scores[id] - top)
-    let mixed = -1
+    for (let id = 0; id < scores.length; id++) if (scores[id] > -Infinity) sum += Math.exp((scores[id] - top) / t)
+    // Each candidate's probability: the model's share, blended with the
+    // memory's. Tokens below e^-20 of the likeliest cannot matter and are
+    // skipped, unless the memory lends them a share.
+    const floor = top - 20 * t
+    const candidates = []
     for (let id = 0; id < scores.length; id++) {
-        if (scores[id] === -Infinity) continue
-        const p = ((1 - lambda) * Math.exp(scores[id] - top)) / sum + lambda * (boost.get(id) || 0)
-        if (p > mixed) {
-            mixed = p
-            best = id
-        }
+        const score = scores[id]
+        if (score === -Infinity) continue
+        const lent = blend ? boost.get(id) || 0 : 0
+        if (score < floor && !lent) continue
+        const p = ((blend ? 1 - lambda : 1) * Math.exp((score - top) / t)) / sum + (blend ? lambda * lent : 0)
+        candidates.push([id, p])
     }
-    return best
+    candidates.sort((a, b) => b[1] - a[1])
+    if (!(temperature > 0)) return candidates[0][0]
+    // The nucleus: the fewest likeliest tokens holding topP of the total.
+    let total = 0
+    for (const [, p] of candidates) total += p
+    let kept = 0
+    let held = 0
+    while (kept < candidates.length && (kept === 0 || held < topP * total)) held += candidates[kept++][1]
+    let at = random() * held
+    for (let i = 0; i < kept; i++) {
+        at -= candidates[i][1]
+        if (at < 0) return candidates[i][0]
+    }
+    return candidates[kept - 1][0]
 }
 
 // What the swarm's memory says about the next token. `spans` are [text,

@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import WebTorrent from 'webtorrent'
 import { toTorrentFile } from 'parse-torrent'
-import { webrtc } from './webrtc.js'
+import { describePorts, webrtc } from './webrtc.js'
 
 const RADIO_DIR = process.env.RADIO_DIR || '/radio'
 const TORRENTS_DIR = process.env.TORRENTS_DIR || '/torrents'
@@ -43,7 +43,7 @@ const uploadLimit = Number(process.env.UPLOAD_LIMIT) > 0 ? Number(process.env.UP
 const client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false, tracker: { rtcConfig }, uploadLimit })
 client.on('error', (err) => log('error:', err.message || err))
 log(
-    `webrtc: ${portRange ? `udp ${portRange.begin}-${portRange.end}, at most ${connections.limit} connections` : 'any udp port'}; ` +
+    `webrtc: ${describePorts(portRange, connections)}; ` +
         `upload ${uploadLimit > 0 ? `at most ${uploadLimit / 1024} KiB/s` : 'unlimited'}`
 )
 

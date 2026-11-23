@@ -74,3 +74,39 @@ test('pick blends memory in, and without it picks as before', () => {
     assert.equal(pick(logits, { ...options, boost: new Map([[3, 1]]), lambda: 0.5 }), 3) // enough
     assert.equal(pick(logits, { ...options, boost: new Map([[4, 1]]), lambda: 0.5, pending: ' s' }), 2) // the unfinished word still rules
 })
+
+test('with a temperature, pick draws among the likeliest, by their odds', () => {
+    const vocab = ['<s>', '\n', ' small', ' little', ' big', ' tiny']
+    const allowed = [0, 0, 1, 1, 1, 1]
+    const stops = [1, 1, 0, 0, 0, 0]
+    const logits = [-9, -9, 3, 2.5, 2, -6]
+    const options = { vocab, allowed, stops, temperature: 0.7, topP: 0.9 }
+    // A seeded generator, so the counts are the same every run.
+    let seed = 7
+    const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31)
+    const counts = new Map()
+    for (let i = 0; i < 3000; i++) {
+        const id = pick(logits, { ...options, random })
+        counts.set(id, (counts.get(id) || 0) + 1)
+    }
+    assert.deepEqual([...counts.keys()].sort(), [2, 3, 4]) // never " tiny", far in the tail, nor the line's start
+    assert.ok(counts.get(2) > counts.get(3) && counts.get(3) > counts.get(4), 'likelier tokens come up more often')
+    assert.ok(counts.get(4) > 150, 'the third still comes up')
+    // A draw is still bound by the unfinished word, and greedy without one.
+    for (let i = 0; i < 50; i++) assert.equal(pick(logits, { ...options, random, pending: ' l' }), 3)
+    assert.equal(pick(logits, { ...options, temperature: 0 }), 2)
+    // A tight nucleus keeps only the likeliest.
+    for (let i = 0; i < 50; i++) assert.equal(pick(logits, { ...options, random, topP: 0.01 }), 2)
+})
+
+test('a draw takes the memory into account', () => {
+    const vocab = ['<s>', '\n', ' small', ' little', ' big']
+    const allowed = [0, 0, 1, 1, 1]
+    const stops = [1, 1, 0, 0, 0]
+    const logits = [-9, -9, 3, 2, -9]
+    let seed = 11
+    const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31)
+    let big = 0
+    for (let i = 0; i < 1000; i++) if (pick(logits, { vocab, allowed, stops, temperature: 0.7, topP: 0.9, random, boost: new Map([[4, 1]]), lambda: 0.6 }) === 4) big++
+    assert.ok(big > 450, `the memory's token, unlikely to the model, is drawn most (${big}/1000)`)
+})

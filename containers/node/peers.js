@@ -22,14 +22,14 @@
 //   PEER_DROP     share of questions left unanswered, to test a flaky chat
 //   PEER_DELAY    most ms an answer is held back, at random (0)
 //   TRACKERS      comma-separated trackers to announce to
-//   WEBRTC_PORTS  a UDP range, on a public server (webrtc.js)
+//   WEBRTC_PORTS  a UDP range, or one port, on a public server (webrtc.js)
 //   DATA_DIR      where downloads and clones are kept (./data)
 
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
 import WebTorrent from 'webtorrent'
-import { webrtc } from './webrtc.js'
+import { describePorts, webrtc } from './webrtc.js'
 
 // Many clients in one process share sockets; the default warns at ten.
 EventEmitter.defaultMaxListeners = 100
@@ -167,9 +167,10 @@ function startPeer(n, text, rtcConfig) {
     return peer
 }
 
-// On a public server, WebRTC's ports are a range (webrtc.js); one range for
-// every peer in this process.
-const { rtcConfig } = await webrtc()
+// On a public server, WebRTC's ports are a range, or one shared port behind
+// a VPN (webrtc.js); one for every peer in this process.
+const { portRange, rtcConfig, connections } = await webrtc()
+log(`webrtc: ${describePorts(portRange, connections)}`)
 
 const beat = () => fs.writeFileSync(HEARTBEAT, String(Date.now()))
 let text = await library()
