@@ -13,8 +13,9 @@ name: src
 #   library   peers that remember the prose and code of git repositories
 #             (PEER_SOURCES), and answer the ghost text's memory questions
 #             in the chats; public profile
-#   webseed   serves the station folders over HTTP (port 8001), so a
-#             browser that cannot reach any peer still plays the radio
+#   webseed   serves the station folders (or what the seeder fetched) over
+#             HTTP (port 8001), so a browser that cannot reach any peer
+#             still plays the radio
 #   tunnel    optional: publishes the tracker and the web seed through a
 #             Cloudflare Tunnel (docker compose --profile tunnel up -d)
 
@@ -74,10 +75,19 @@ services:
       # WebRTC's UDP ports, and an upload cap in KiB/s (seed.js).
       WEBRTC_PORTS: ${WEBRTC_PORTS:-51000-51999}
       UPLOAD_LIMIT: ${UPLOAD_LIMIT:-0}
+      # A station with no folder here is fetched: its .torrent from the
+      # site, its songs from the swarm and the mirror, into the stations
+      # volume; the site is asked for a new version every STATION_REFRESH
+      # hours (seed.js).
+      SITE_URL: ${SITE_URL:-https://src.eco}
+      MIRROR_URL: ${MIRROR_URL:-https://radio.src.eco}
+      STATION_REFRESH: ${STATION_REFRESH:-6}
     volumes:
       # One line per station: a folder, mounted at /radio/<frequency>.
+      # Unset, it is empty, and the station is fetched into /cache.
       - ${STATION_59_1:-./data/radio/59.1}:/radio/59.1:ro
       - torrents:/torrents
+      - stations:/cache
     healthcheck:
       test: [CMD, node, -e, "process.exit(Date.now() - Number(require('fs').readFileSync('/tmp/alive', 'utf8')) < 90000 ? 0 : 1)"]
       interval: 30s
@@ -93,6 +103,7 @@ services:
     volumes:
       - ${STATION_59_1:-./data/radio/59.1}:/radio/59.1:ro
       - torrents:/torrents:ro
+      - stations:/cache:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${WEBSEED_PORT:-8001}:8001"
     healthcheck:
@@ -145,7 +156,7 @@ services:
       PEER_SOURCES: ${PEER_SOURCES:-}
       PEER_CHATS: ${CHATS:-trade}
       PEER_WEIGHT: ${PEER_WEIGHT:-1}
-      PEER_REFRESH: ${PEER_REFRESH:-24}
+      PEER_REFRESH: ${PEER_REFRESH:-6}
       PEER_MB: ${PEER_MB:-2}
       PEERS: ${LIBRARY_PEERS:-0}
       TRACKERS: ws://${BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-8002},${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
@@ -212,6 +223,7 @@ services:
 
 volumes:
   torrents:
+  stations:
   peers:
   library:
   certificates:

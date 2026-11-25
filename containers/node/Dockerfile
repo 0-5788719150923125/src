@@ -19,7 +19,7 @@ COPY containers/node/package.json containers/node/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
     && npm rebuild node-datachannel \
     && npm cache clean --force \
-    && mkdir -p /torrents /data && chown node:node /torrents /data
+    && mkdir -p /torrents /data /cache && chown node:node /torrents /data /cache
 
 COPY containers/node/seed.js containers/node/tracker.js containers/node/webseed.js containers/node/peers.js containers/node/sources.js containers/node/webrtc.js ./
 COPY src/js/room.js src/js/memory.js ./

@@ -6,7 +6,9 @@
 // the preflight must allow it, while Chromium drops it silently.
 //
 //   /radio/59.1.torrent  the station's torrent, written by the seeder
-//   /radio/59.1/<file>   the station's files
+//   /radio/59.1/<file>   the station's files: from its folder, else from
+//                        what the seeder fetched into CACHE_DIR, once the
+//                        station is whole (when it writes the .torrent)
 
 import fs from 'node:fs'
 import http from 'node:http'
@@ -15,6 +17,7 @@ import path from 'node:path'
 const PORT = Number(process.env.PORT || 8001)
 const RADIO_DIR = path.resolve(process.env.RADIO_DIR || '/radio')
 const TORRENTS_DIR = path.resolve(process.env.TORRENTS_DIR || '/torrents')
+const CACHE_DIR = path.resolve(process.env.CACHE_DIR || '/cache')
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 
 const TYPES = {
@@ -46,7 +49,10 @@ function locate(urlPath) {
     if (!rel.startsWith('/radio/')) return null
     const file = path.join(RADIO_DIR, rel.slice('/radio/'.length))
     if (!file.startsWith(RADIO_DIR + path.sep)) return null
-    return { file, cache: 'public, max-age=3600' }
+    const cached = path.join(CACHE_DIR, path.relative(RADIO_DIR, file))
+    const station = path.relative(RADIO_DIR, file).split(path.sep)[0]
+    const fetched = !fs.existsSync(file) && fs.existsSync(path.join(TORRENTS_DIR, `${station}.torrent`))
+    return { file: fetched ? cached : file, cache: 'public, max-age=3600' }
 }
 
 function respond(req, res) {

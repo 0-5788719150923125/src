@@ -18,7 +18,7 @@
 //                 match by it, and a person's own counts 1
 //   PEERS         how many (8; for git, enough for the text, up to 16)
 //   PEER_MB       millions of characters per peer, at most (2)
-//   PEER_REFRESH  for git: hours between refreshes (24; 0: never)
+//   PEER_REFRESH  for git: hours between refreshes (6; 0: never)
 //   PEER_DROP     share of questions left unanswered, to test a flaky chat
 //   PEER_DELAY    most ms an answer is held back, at random (0)
 //   TRACKERS      comma-separated trackers to announce to
@@ -43,7 +43,7 @@ const CHATS = list(process.env.PEER_CHATS || 'memorytest').map((name) => name.to
 const WEIGHT = Math.min(1, Math.max(0, Number(process.env.PEER_WEIGHT ?? 1)))
 const PER_PEER = (Number(process.env.PEER_MB) || 2) * 1e6
 const MAX_PEERS = 16
-const REFRESH = (Number(process.env.PEER_REFRESH ?? 24) || 0) * 3600000
+const REFRESH = (Number(process.env.PEER_REFRESH ?? 6) || 0) * 3600000
 const HEARTBEAT = process.env.HEARTBEAT || '/tmp/alive'
 const TRACKERS = list(process.env.TRACKERS)
 const DROP = Number(process.env.PEER_DROP) || 0

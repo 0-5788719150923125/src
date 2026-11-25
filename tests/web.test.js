@@ -183,6 +183,9 @@ test('the stack is optional, and deploys keep local addresses out', async () => 
     assert.equal(siteConfig(stations, { SRC_SEED_URL: 'https://seed.src.eco' }, { deploy: true }).seed, 'https://seed.src.eco')
     const live = siteConfig(stations, { SRC_TRACKER_URL: 'wss://tracker.src.eco' }, { deploy: true })
     assert.equal(live.trackers[0], 'wss://tracker.src.eco')
+    // Several servers' trackers, first, and only the public ones in a deploy.
+    const servers = { SRC_TRACKERS: ' wss://59.src.eco, wss://95.src.eco,ws://localhost:8002,' }
+    assert.deepEqual(siteConfig(stations, servers, { deploy: true }).trackers, ['wss://59.src.eco', 'wss://95.src.eco', ...PUBLIC_TRACKERS])
 })
 
 test('a station\'s ticker numbers have labels and units', () => {

@@ -24,7 +24,9 @@
 //   CLOUDFLARE_R2_BUCKET=src-radio           optional: the radio's mirror
 //   CLOUDFLARE_R2_DOMAIN=radio.src.eco       (both, or neither; mirror.js)
 //   CLOUDFLARE_TURN=off                      optional: no chat relay (turn.js)
-//   CLOUDFLARE_TURN_CAP_GB=800               the relay's monthly cap
+//   CLOUDFLARE_TURN_CAP_GB=90                the relay's cap, over
+//   CLOUDFLARE_TURN_CAP_DAYS=3               a sliding window of days
+//   CLOUDFLARE_ALERT_WEBHOOK=https://...     optional: Discord alerts
 //
 // Careful with the project: a deploy replaces everything a project serves.
 // Both directions refuse a project that serves a custom domain other than
@@ -347,8 +349,8 @@ export async function deploy(out, { project = DEFAULT_PROJECT, domain } = {}) {
     // The chat's relay, set in the project's variables before the upload so
     // this deployment has them. Its trouble never fails a deploy either:
     // chat still connects directly.
-    const relay = turnSettings()
     try {
+        const relay = turnSettings()
         const { token, account } = credentials('deploy')
         if (relay) await ensureTurn(account, project, token, relay)
         else await disableTurn(account, project, token)
