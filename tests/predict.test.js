@@ -53,13 +53,18 @@ test('the conversation start stays put until it must jump', () => {
     assert.equal(start(0, 4, () => 1000, { most: 300, least: 200 }), 3) // one long line
 })
 
-test('memory lends its share to the tokens that start each remembered span', () => {
-    const byString = new Map([[' l', 1], [' little', 2], [' big', 3], ['tle', 4]])
+test('memory lends its share to the token each remembered span starts with', () => {
+    // A stand-in tokenizer: the longest known piece at the start, none for spaces alone.
+    const pieces = new Map([[' l', 1], [' little', 2], [' big', 3], ['tle', 4], [' ', 7], [' moon', 8]])
+    const first = (rest) => {
+        for (let k = rest.length; k > 0; k--) if (pieces.has(rest.slice(0, k))) return /\S/.test(rest.slice(0, k)) ? pieces.get(rest.slice(0, k)) : undefined
+    }
     const spans = [[' little girl', 0.75], [' big dog', 0.25]]
-    assert.deepEqual([...boostFrom(spans, '', byString)], [[1, 0.75], [2, 0.75], [3, 0.25]])
-    assert.deepEqual([...boostFrom(spans, ' lit', byString)], [[4, 1]]) // " big dog" no longer agrees
-    assert.deepEqual([...boostFrom(spans, ' little girl', byString)], []) // nothing left to say
-    assert.deepEqual([...boostFrom([[' moon', 1]], '', new Map([[' ', 7], [' moon', 8]]))], [[8, 1]]) // no bare spaces
+    assert.deepEqual([...boostFrom(spans, '', first)], [[2, 0.75], [3, 0.25]]) // " little", never " l"
+    assert.deepEqual([...boostFrom(spans, ' lit', first)], [[4, 1]]) // " big dog" no longer agrees
+    assert.deepEqual([...boostFrom(spans, ' little girl', first)], []) // nothing left to say
+    assert.deepEqual([...boostFrom([['  moon', 1]], '', first)], []) // no bare spaces
+    assert.deepEqual([...boostFrom([[' little one', 0.5], [' little two', 0.5]], '', first)], [[2, 1]]) // shares add up
 })
 
 test('pick blends memory in, and without it picks as before', () => {

@@ -36,18 +36,34 @@ export const whenReady = new Promise((resolve) => (markReady = resolve))
 
 // Ask for a guess at the rest of `line`. `onGhost` receives { text } for
 // each piece as it is written, then { done: true }. Returns the guess's id.
-// The room is asked what it remembers first (recall.js); with no one to
-// ask, that costs nothing.
+// The guess starts at once, with this tab's own memory; what the room
+// remembers (recall.js) follows as it arrives.
 export function guess(line, onGhost) {
     const id = ++next
     current = { id, onGhost }
-    const context = [...lines.slice(-4), line].join('\n')
-    recall.ask(context)
-        .catch(() => null)
-        .then((memory) => {
-            if (current?.id === id) worker.postMessage({ command: 'guess', id, line, memory })
-        })
+    ask(id, 0, line, (memory, done) => worker.postMessage({ command: 'guess', id, line, memory, done }))
     return id
+}
+
+// Put question `seq` of guess `id` to the room's memory, about how `line`
+// goes on after the conversation's last lines. The first word (this tab's
+// own memory, at once) goes to `first` if given; the rest, as it comes, to
+// the worker.
+function ask(id, seq, line, first = null) {
+    const send = (memory, done) => {
+        if (current?.id !== id) return
+        if (first) {
+            const start = first
+            first = null
+            return start(memory, done)
+        }
+        worker.postMessage({ command: 'memory', id, seq, memory, done })
+    }
+    try {
+        recall.ask([...lines.slice(-4), line].join('\n'), send)
+    } catch {
+        send(null, true)
+    }
 }
 
 export function stop() {
@@ -88,15 +104,7 @@ function start(threads = 0) {
         }
         if (data.ghost && data.ghost.id === current?.id) current.onGhost(data.ghost)
         // The guess has outrun what the room remembered: ask again.
-        if (data.more && data.more.id === current?.id) {
-            const { id, seq, line } = data.more
-            recall
-                .ask([...lines.slice(-4), line].join('\n'))
-                .catch(() => null)
-                .then((memory) => {
-                    if (current?.id === id) worker.postMessage({ command: 'memory', id, seq, memory })
-                })
-        }
+        if (data.more && data.more.id === current?.id) ask(data.more.id, data.more.seq, data.more.line)
         if (data.ready) {
             clearTimeout(watchdog)
             ready = true

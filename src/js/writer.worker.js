@@ -46,14 +46,13 @@ const TEMPERATURE = 0.7
 const TOP_P = 0.9
 // Tokens between questions to the room's memory while a guess is written.
 const ASK_EVERY = 4
-const ASK_WAIT = 200 // ms to wait for the room's answer before writing on
 
 let model = null
 let tokenizer = null
 let vocab = [] // what each token reads as
 let allowed = null // 1 for tokens the chat accepts (room.js isPlain)
 let stops = null // 1 for tokens that end a line: line breaks, special tokens
-let byString = new Map() // a token's text -> its id, for the swarm's memory
+let firsts = new Map() // a remembered span's rest -> the token it starts with (firstToken)
 let words = null // 1 for allowed tokens with something besides spaces in them
 let none = null // no tokens at all: no stops, while a guess has shown nothing yet
 let preamble = '' // read before the conversation (text/<language>/pen.md)
@@ -61,7 +60,7 @@ let lines = [] // the room's conversation
 let from = 0 // the first line the model reads
 let cache = { ids: [], past: null } // what the model has read, and its keys and values
 let turn = 0 // bumped by every guess and stop: work from an older turn stops
-let asking = null // a question about memory this worker is waiting on: { id, seq, written, answer }
+let heard = null // the room's latest word on a question: { id, seq, memory, done }
 let asked = 0 // numbers the questions, so a late answer is not taken for a newer one's
 let work = Promise.resolve() // one thing at a time, since all of it shares the cache
 
@@ -142,7 +141,6 @@ async function load(text) {
     const special = new Set(tokenizer.all_special_ids)
     allowed = Uint8Array.from(vocab, (piece, id) => !special.has(id) && piece !== '' && isPlain(piece))
     stops = Uint8Array.from(vocab, (piece, id) => special.has(id) || piece.includes('\n'))
-    vocab.forEach((piece, id) => allowed[id] && !byString.has(piece) && byString.set(piece, id))
     words = Uint8Array.from(vocab, (piece, id) => allowed[id] && /\S/.test(piece))
     none = new Uint8Array(vocab.length)
     weights = Object.values(files).reduce((sum, f) => sum + f.total, 0)
@@ -219,10 +217,24 @@ function warm() {
 
 // ------------------------------------------------------------ guesses
 
-// `memory` is what the room's peers remembered for this line (memory.js,
+// The token a remembered span's rest starts with, as the tokenizer writes
+// it, so the memory lends its share to a spelling the model writes itself
+// (boostFrom); none for a token of spaces alone.
+function firstToken(rest) {
+    if (!firsts.has(rest)) {
+        if (firsts.size >= 4096) firsts.clear()
+        const id = encode(rest)[0]
+        firsts.set(rest, id !== undefined && /\S/.test(vocab[id]) ? id : undefined)
+    }
+    return firsts.get(rest)
+}
+
+// `memory` is what this tab remembered of how the line goes on (memory.js,
 // merged by recall.js), or null: spans that went on from the end of the
-// line, and the length of the match that found them.
-async function guess(id, line, stopped, memory) {
+// line, and the length of the match that found them. The room's peers are
+// asked at the same time; their answers come in `heard` as they arrive
+// (`done` once no more will), and steer what is left to write.
+async function guess(id, line, stopped, memory, done) {
     const { stable, tail } = split(line)
     const typed = encode(stable)
     let scores = await read([...context(), ...typed], stopped)
@@ -230,48 +242,50 @@ async function guess(id, line, stopped, memory) {
     const recent = new Set(typed)
     let pending = tail
     // The model writes from the end of `stable`, so the unfinished word comes
-    // first in what it writes; the spans go on from after it. When no span
-    // agrees with what has been written any more, the room is asked again
-    // about the line as it now stands (every ASK_EVERY tokens at most, less
-    // often while it has nothing to say), and its answer goes on from there.
-    // The memory counts for its match length, and for where it came from:
-    // text from other rooms than this one counts for less (memory.js).
-    let lambda = memory ? weight(memory.L) * (memory.w ?? 1) : 0
-    let spans = lambda ? memory.spans.map(([text, share]) => [tail + text, share]) : []
+    // first in what it writes; the spans go on from after it. A question's
+    // spans go on from what had been written when it was asked (its
+    // anchor), and count only while what was written since agrees with
+    // them, so an answer that comes late steers the guess only if the guess
+    // has gone its way. When no span agrees any more, and the last question
+    // is closed, the room is asked about the line as it now stands (every
+    // ASK_EVERY tokens at most, less often while it has nothing to say); the
+    // guess writes on meanwhile. The memory counts for its match length, and
+    // for where it came from: text from other rooms than this one counts for
+    // less (memory.js).
+    let question = { seq: 0, anchor: tail, open: !done }
+    let lambda = 0
+    let spans = []
+    const adopt = (found) => {
+        lambda = found ? weight(found.L) * (found.w ?? 1) : 0
+        spans = lambda ? found.spans.map(([text, share]) => [question.anchor + text, share]) : []
+    }
+    adopt(memory)
     let written = ''
     let lastAsked = 0
     let every = ASK_EVERY // doubles each time the room has nothing to say
-    asking = null
-    // Take the room's answer to the last question: its spans go on from what
-    // had been written when it was asked.
-    const adopt = () => {
-        const { answer } = asking
-        if (!answer) every *= 2
-        lambda = answer ? weight(answer.L) * (answer.w ?? 1) : 0
-        spans = lambda ? answer.spans.map(([text, share]) => [asking.written + text, share]) : []
-        asking = null
+    let taken = null
+    // Take what the room has said, since the last token, about the latest
+    // question (some of it may have come while the guess waited its turn).
+    const listen = () => {
+        if (!heard || heard === taken || heard.id !== id || heard.seq !== question.seq) return
+        taken = heard
+        adopt(heard.memory)
+        if (heard.done) {
+            question.open = false
+            if (question.seq && !heard.memory) every *= 2
+        }
     }
     let why = 'end' // why the guess stopped: the model ended the line, or the budget ran out
     let shown = 0
     for (let n = 0; n < LENGTH; n++) {
         await yieldToMessages()
         if (stopped()) return
-        if (asking?.id === id && asking.answer !== undefined) adopt()
-        let boost = spans.length ? boostFrom(spans, written, byString) : null
-        if (!boost?.size && !asking && n - lastAsked >= every) {
-            asking = { id, seq: ++asked, written }
+        listen()
+        const boost = spans.length ? boostFrom(spans, written, firstToken) : null
+        if (!boost?.size && !question.open && n - lastAsked >= every) {
+            question = { seq: ++asked, anchor: written, open: true }
             lastAsked = n
-            postMessage({ more: { id, seq: asking.seq, line: stable + written } })
-            // Wait a moment for the answer: a token written meanwhile would
-            // already have gone its own way. No answer in time counts as
-            // none, and the guess goes on with the model alone; it may ask
-            // again later.
-            const until = performance.now() + ASK_WAIT
-            while (asking?.answer === undefined && performance.now() < until && !stopped()) await yieldToMessages()
-            if (stopped()) return
-            if (asking.answer === undefined) asking.answer = null
-            adopt()
-            boost = spans.length ? boostFrom(spans, written, byString) : null
+            postMessage({ more: { id, seq: question.seq, line: stable + written } })
         }
         // A guess may not end, or write only spaces, before it has shown
         // something: after a finished message the model's likeliest next
@@ -314,9 +328,9 @@ onmessage = ({ data }) => {
         if (model) warm()
     } else if (data.command === 'guess') {
         const mine = ++turn
-        if (model) queue(() => guess(data.id, data.line, () => turn !== mine, data.memory))
+        if (model) queue(() => guess(data.id, data.line, () => turn !== mine, data.memory, data.done))
     } else if (data.command === 'memory') {
-        if (asking?.id === data.id && asking.seq === data.seq) asking.answer = data.memory
+        heard = { id: data.id, seq: data.seq, memory: data.memory, done: data.done }
     } else if (data.command === 'stop') {
         turn++
     }

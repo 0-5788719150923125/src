@@ -1,20 +1,25 @@
-// Asking the room what it remembers, and answering it (memory.js). Before
+// Asking the room what it remembers, and answering it (memory.js). For
 // each guess, the end of the conversation and the line being typed go to
-// the peers this tab is connected to; the answers that arrive in time,
-// with this tab's own (library.js), are merged and handed to the writer.
-// Questions from the room's peers are answered from this tab's library.
-// The ticker shows how many peers remember and how long a match they found.
+// the peers this tab is connected to. The guess never waits for them: it
+// starts with this tab's own memory (library.js), and every answer that
+// arrives is merged with the ones before and handed on, so it steers
+// whatever the guess has yet to write. Questions from the room's peers are
+// answered from this tab's library. The ticker shows how many peers
+// remember, how many answered, and how long a match they found.
 
 import * as library from './library.js'
 import { CONTEXT, clean, memoryExtension, merge, remembers, sendMemory } from './memory.js'
 import { state } from './state.js'
 
-const WAIT = 150 // ms to wait for answers before guessing without them
+// ms after which a question is closed: answers later than this are not
+// heard (measured 2026-11-25: the stack's servers answer in 80 ms at the
+// median, 275 ms at worst).
+const WAIT = 300
 const PER_SECOND = 10 // questions answered per peer per second, at most
 let room = null // the room's torrent, whose wires carry the questions
 let name = '' // and its name
 let next = 0
-const waiting = new Map() // question id -> { answers, from, expect, finish }
+const waiting = new Map() // question id -> { answers, from, expect, heard, finish }
 const asked = new WeakMap() // wire -> { at, count }, for the rate limit
 
 export function use(torrent, roomName) {
@@ -35,6 +40,7 @@ function onMessage(message, wire) {
     question.from.add(wire)
     question.answers.push(clean(message))
     if (question.answers.length - 1 >= question.expect) question.finish()
+    else question.heard()
 }
 
 // A peer in this room asks how a line goes on: answer from the library,
@@ -65,40 +71,54 @@ const own = (context) => {
     }
 }
 
-// What the room remembers about how `context` goes on, this tab's own
-// library included, or null. Never fails and never waits past WAIT: a peer
-// that is slow, gone, or broken only means less memory, and the writer
-// guesses with what it has.
-export function ask(context) {
-    const mine = own(context)
+// What the room remembers about how `context` goes on: `update(memory,
+// done)` is called at once (before this returns) with this tab's own
+// memory, then again with all the answers so far each time a peer answers,
+// and a last time with done = true once every peer has answered or WAIT
+// has passed. memory is null when nothing matched. Never throws: a peer
+// that is slow, gone, or broken only means less memory.
+export function ask(context, update) {
+    const tell = (memory, done) => {
+        try {
+            update(memory, done)
+        } catch (err) {
+            console.warn('recall:', err.message || err)
+        }
+    }
+    const answers = [own(context)]
+    const merged = () => {
+        try {
+            const memory = merge(answers)
+            return memory.L ? memory : null
+        } catch (err) {
+            console.warn('recall:', err.message || err)
+            return null
+        }
+    }
     const wires = (room?.wires ?? []).filter(remembers)
     if (!wires.length) {
-        const memory = merge([mine])
-        if (memory.L) state.set('memory', { peers: 0, answered: 0, match: memory.L })
-        return Promise.resolve(memory.L ? memory : null)
+        const memory = merged()
+        if (memory) state.set('memory', { peers: 0, answered: 0, match: memory.L })
+        return tell(memory, true)
     }
     const id = ++next
-    return new Promise((resolve) => {
-        const question = { answers: [mine], from: new Set(), expect: 0 }
-        const timer = setTimeout(() => question.finish(), WAIT)
-        question.finish = () => {
-            if (!waiting.delete(id)) return
-            clearTimeout(timer)
-            let memory = null
-            try {
-                memory = merge(question.answers)
-                state.set('memory', { peers: wires.length, answered: question.answers.length - 1, match: memory.L })
-            } catch (err) {
-                console.warn('recall:', err.message || err)
-            }
-            resolve(memory?.L ? memory : null)
-        }
-        waiting.set(id, question)
-        for (const wire of wires) {
-            try {
-                if (sendMemory(wire, { q: id, c: context.slice(-CONTEXT) })) question.expect++
-            } catch {}
-        }
-        if (!question.expect) question.finish()
-    })
+    const question = { answers, from: new Set(), expect: 0 }
+    let timer = null
+    question.heard = () => tell(merged(), false)
+    question.finish = () => {
+        if (!waiting.delete(id)) return
+        clearTimeout(timer)
+        const memory = merged()
+        state.set('memory', { peers: wires.length, answered: answers.length - 1, match: memory?.L ?? 0 })
+        tell(memory, true)
+    }
+    waiting.set(id, question)
+    for (const wire of wires) {
+        try {
+            if (sendMemory(wire, { q: id, c: context.slice(-CONTEXT) })) question.expect++
+        } catch {}
+    }
+    if (!question.expect) return question.finish()
+    tell(merged(), false)
+    timer = setTimeout(question.finish, WAIT)
 }

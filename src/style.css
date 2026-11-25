@@ -234,6 +234,14 @@ output pre {
   outline: none;
   color: inherit;
   background-color: transparent;
+  /* A finger drawn sideways along the ghost swipes it (ghost.js); up and
+     down still scroll the page. */
+  touch-action: pan-y pinch-zoom;
+}
+
+/* What a swipe along the ghost would keep (ghost.js), drawn as if typed. */
+#taking {
+  color: inherit;
 }
 
 /* The guess at the rest of the line (ghost.js), after the typed text in the

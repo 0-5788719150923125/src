@@ -3,10 +3,11 @@
 // cursor. Tab takes it a word at a time, as if typed; held, it takes words
 // quickly until released, a whole sentence in a moment. Tab never moves the
 // focus. On a touchscreen, which has no Tab, a tap on the ghost keeps it up
-// to the end of the word tapped. Escape dismisses the ghost. Typing what it
-// shows keeps it; typing
-// anything else stops it at once, and a new guess comes once the typing
-// pauses. Commands get no guesses.
+// to the end of the word tapped, and a finger drawn along it keeps it up to
+// the end of the word where the finger lifts (drawn back, it keeps less;
+// back past the ghost's start, nothing). Escape dismisses the ghost. Typing
+// what it shows keeps it; typing anything else stops it at once, and a new
+// guess comes once the typing pauses. Commands get no guesses.
 
 import * as writer from './writer.js'
 import { ahead } from './predict.js'
@@ -19,6 +20,7 @@ const STUCK = 5000
 const RETRIES = 2
 const input = document.getElementById('command')
 const view = document.getElementById('ghost')
+const taking = document.getElementById('taking') // what a swipe would keep, drawn as typed
 const typed = document.getElementById('typed')
 
 let current = null // { id, base, written, done }: the line it guessed from, and the guess so far
@@ -83,11 +85,15 @@ function changed(again = false) {
 // The mirror behind the line (style.css) holds the typed text, unseen, and
 // the ghost after it, so the ghost starts where the text ends and wraps with
 // it. The mirror also sizes the line, so it is kept up to date on every
-// change, ghost or not.
+// change, ghost or not. During a swipe, the ghost's start that would be kept
+// is drawn apart, like typed text.
 function draw() {
     typed.textContent = input.value
     const rest = shown()
-    view.textContent = rest && atEnd() ? rest : ''
+    const visible = rest && atEnd() ? rest : ''
+    const keep = press?.swiping && press.line === input.value && visible.startsWith(press.region) ? press.region : ''
+    taking.textContent = keep
+    view.textContent = visible.slice(keep.length)
 }
 
 // Take the ghost's next word (its leading space and any punctuation stuck to
@@ -113,49 +119,128 @@ function release() {
     holding = null
 }
 
-// The line lies over the ghost (style.css), so a tap on the ghost lands on
-// the line; where it fell is found in the ghost's own text. Returns the
-// ghost up to the end of the word nearest the point (a gap counts as the
-// word after it), or null when the point is not near the ghost.
+// The line lies over the ghost (style.css), so a touch on the ghost lands on
+// the line; where it fell is found in the ghost's own text, by the boxes of
+// its characters (wherever they are drawn: a swipe draws its start apart).
+function ghostBoxes() {
+    const range = document.createRange()
+    const boxes = []
+    let text = ''
+    for (const node of [taking.firstChild, view.firstChild]) {
+        if (!node) continue
+        for (let i = 0; i < node.length; i++) {
+            range.setStart(node, i)
+            range.setEnd(node, i + 1)
+            for (const r of range.getClientRects()) boxes.push({ at: text.length + i, left: r.left, right: r.right, top: r.top, bottom: r.bottom })
+        }
+        text += node.textContent
+    }
+    return { text, boxes }
+}
+
+// The ghost up to the end of the word at `at` (a gap counts as the word
+// after it).
+const upToWord = (text, at) => text.slice(0, at + /^\s*\S*/.exec(text.slice(at))[0].length)
+
+// For a tap: the ghost up to the end of the word nearest the point, or null
+// when the point is not near the ghost.
 const REACH = 12 // px a finger may miss by
 function upToWordAt(x, y) {
-    const node = view.firstChild
-    if (!node) return null
-    const text = node.textContent
-    const range = document.createRange()
+    const { text, boxes } = ghostBoxes()
     let best = { at: -1, distance: REACH }
-    for (let i = 0; i < text.length; i++) {
-        range.setStart(node, i)
-        range.setEnd(node, i + 1)
-        for (const r of range.getClientRects()) {
-            const distance = Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom))
-            if (distance < best.distance) best = { at: i, distance }
-        }
+    for (const b of boxes) {
+        const distance = Math.hypot(Math.max(b.left - x, 0, x - b.right), Math.max(b.top - y, 0, y - b.bottom))
+        if (distance < best.distance) best = { at: b.at, distance }
     }
-    if (best.at < 0) return null
-    const end = best.at + /^\s*\S*/.exec(text.slice(best.at))[0].length
-    return text.slice(0, end)
+    return best.at < 0 ? null : upToWord(text, best.at)
 }
 
-// Where a tap went down, read before the tap moves the cursor (which hides
-// the ghost); it is taken on the click that ends the tap, so a swipe that
-// scrolls takes nothing. A mouse click never takes the ghost.
-let tap = null
-
-function onPointerDown(event) {
-    tap = null
-    if (event.pointerType === 'mouse' || !view.textContent) return
-    const take = upToWordAt(event.clientX, event.clientY)
-    if (take) tap = { take, line: input.value }
+// For a swipe: the same, wherever the finger is, along the line of the
+// ghost nearest it (the ghost wraps, and a finger beside one line can be
+// nearer the next); nothing once it is back before the ghost's first
+// character.
+function swipedTo(x, y) {
+    const { text, boxes } = ghostBoxes()
+    if (!boxes.length) return ''
+    const off = (b) => Math.max(b.top - y, 0, y - b.bottom)
+    const top = boxes.reduce((best, b) => (off(b) < off(best) ? b : best)).top
+    const line = boxes.filter((b) => Math.abs(b.top - top) < 2)
+    if (line[0].at === 0 && x < line[0].left) return ''
+    const along = (b) => Math.max(b.left - x, 0, x - b.right)
+    return upToWord(text, line.reduce((best, b) => (along(b) < along(best) ? b : best)).at)
 }
 
-function onTap() {
-    const { take, line } = tap ?? {}
-    tap = null
+// Keep `take`, the ghost's start, if the line is still `line`.
+function keep(take, line) {
     if (!take || input.value !== line || !shown()?.startsWith(take)) return
     input.value += take
     input.setSelectionRange(input.value.length, input.value.length)
     changed()
+}
+
+// A finger (or pen) down on the ghost. Where it went down is read at once,
+// before the tap moves the cursor (which hides the ghost). Lifted where it
+// went down, it is a tap, taken on the click that ends it, so a touch that
+// scrolls the page takes nothing. Drawn sideways SWIPE px or more, it is a
+// swipe: what it would keep follows the finger, and is kept when the finger
+// lifts. The line lets the page scroll up and down, but not sideways
+// (style.css), so a sideways draw stays a swipe; a scroll cancels it. A
+// mouse never takes the ghost.
+const SWIPE = 12
+let tap = null // { take, line }: what a tap here would keep
+let press = null // { id, x, line, region, swiping }
+let swiped = false // a swipe just ended: a click after it must not move the cursor
+
+function onPointerDown(event) {
+    tap = null
+    press = null
+    swiped = false
+    if (event.pointerType === 'mouse' || !(view.textContent || taking.textContent)) return
+    const take = upToWordAt(event.clientX, event.clientY)
+    if (!take) return
+    tap = { take, line: input.value }
+    press = { id: event.pointerId, x: event.clientX, line: input.value, region: take, swiping: false }
+}
+
+function onPointerMove(event) {
+    if (press?.id !== event.pointerId) return
+    if (!press.swiping) {
+        if (Math.abs(event.clientX - press.x) < SWIPE) return
+        press.swiping = true
+        tap = null
+    }
+    press.region = swipedTo(event.clientX, event.clientY)
+    draw()
+}
+
+function onPointerUp(event) {
+    if (press?.id !== event.pointerId) return
+    const { swiping, region, line } = press
+    press = null
+    if (!swiping) return
+    swiped = true
+    keep(region, line)
+    draw()
+}
+
+function onPointerCancel(event) {
+    if (press?.id !== event.pointerId) return
+    press = null
+    tap = null
+    draw()
+}
+
+function onClick() {
+    if (swiped) {
+        // A short swipe can still end in a click, which puts the cursor
+        // where the finger was: back to the end, where the ghost is.
+        swiped = false
+        input.setSelectionRange(input.value.length, input.value.length)
+        return changed()
+    }
+    const { take, line } = tap ?? {}
+    tap = null
+    keep(take, line)
 }
 
 function onKey(event) {
@@ -181,7 +266,12 @@ export function attach() {
     })
     input.addEventListener('blur', release)
     input.addEventListener('pointerdown', onPointerDown)
-    input.addEventListener('click', onTap)
+    input.addEventListener('pointermove', onPointerMove)
+    input.addEventListener('pointerup', onPointerUp)
+    input.addEventListener('pointercancel', onPointerCancel)
+    input.addEventListener('click', onClick)
+    // Held on the ghost, a finger means to swipe: no menu, no selection.
+    input.addEventListener('contextmenu', (event) => press && event.preventDefault())
     for (const type of ['click', 'focus', 'blur', 'select']) input.addEventListener(type, draw)
     document.addEventListener('selectionchange', draw)
     window.addEventListener('resize', draw)

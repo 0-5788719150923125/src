@@ -89,6 +89,19 @@ test('one peer weighs its rooms: the room asked through counts most', () => {
     assert.deepEqual(combine([{ L: 40, w: OTHER_ROOM, spans: [['far', 1]] }, apples]).spans, [['far', OTHER_ROOM]]) // the longer match still decides
 })
 
+test('one peer answers from all its slices as one, and a line two slices hold counts once', () => {
+    // As containers/node/peers.js does: each slice indexed on its own, every
+    // slice's lookup combined.
+    const slices = ['the cat sat on the mat.\nthe owl said hoot.\n', 'the dog ran far.\nthe cat sat on the mat.\n', 'nothing to see here.\n']
+    const memories = slices.map((text) => index(text))
+    const recollect = (context) => combine(memories.map((memory) => ({ ...lookup(memory, context), w: 1 })))
+    const answer = recollect('and then the cat sat on')
+    assert.equal(answer.L, 'the cat sat on'.length)
+    assert.deepEqual(answer.spans, [[' the mat.', 2]]) // both slices that hold it, one answer
+    assert.deepEqual(recollect('so the dog ran').spans, [[' far.', 1]]) // a line only one slice holds
+    assert.equal(recollect('zzzz qqqq xxxx'), null)
+})
+
 test('received answers are checked, and weight grows with the match', () => {
     assert.equal(clean({ L: 'x' }), null)
     assert.deepEqual(clean({ L: 999, s: [['ok', 2], ['x'.repeat(99), 1], [5, 1], ['no', -1]] }), { L: DEPTH, spans: [['ok', 2]], w: 1 })

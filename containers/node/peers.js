@@ -1,8 +1,10 @@
 // Peers that remember a library: a crowd that holds text and answers the
 // memory questions browsers ask while their visitors type (memory.js), so
-// what it holds sways the ghost text. Each peer holds a slice of the text
-// (so no two vote for the same line), and joins the chats in PEER_CHATS
-// through the trackers. They never chat; they only remember.
+// what it holds sways the ghost text. The text is cut into slices of at
+// most PEER_MB million characters, each indexed on its own; each peer
+// holds some of them (so no two vote for the same line) and answers from
+// all of its slices as one, and joins the chats in PEER_CHATS through the
+// trackers. They never chat; they only remember.
 //
 // Two uses: the stack's `library` service (compose profile `public`), whose
 // text is the prose and code of git repositories (PEER_DATA=git,
@@ -16,8 +18,10 @@
 //   PEER_CHATS    comma-separated chats to answer in (memorytest)
 //   PEER_WEIGHT   how much an answer counts, 0 to 1 (1); browsers scale a
 //                 match by it, and a person's own counts 1
-//   PEERS         how many (8; for git, enough for the text, up to 16)
-//   PEER_MB       millions of characters per peer, at most (2)
+//   PEERS         how many (8; for git, 1: one connection per visitor,
+//                 one answer per server, however much it holds)
+//   PEER_MB       millions of characters per slice, at most (2); for git,
+//                 as many slices as the text needs, up to 16
 //   PEER_REFRESH  for git: hours between refreshes (6; 0: never)
 //   PEER_DROP     share of questions left unanswered, to test a flaky chat
 //   PEER_DELAY    most ms an answer is held back, at random (0)
@@ -35,14 +39,14 @@ import { describePorts, webrtc } from './webrtc.js'
 EventEmitter.defaultMaxListeners = 100
 
 const { roomFile } = await import(process.env.ROOM_JS || './room.js')
-const { index, lookup, memoryExtension, sendMemory } = await import(process.env.MEMORY_JS || './memory.js')
+const { combine, index, lookup, memoryExtension, sendMemory } = await import(process.env.MEMORY_JS || './memory.js')
 
 const list = (value) => (value || '').split(',').map((s) => s.trim()).filter(Boolean)
 const DATA = process.env.PEER_DATA || 'tinystories'
 const CHATS = list(process.env.PEER_CHATS || 'memorytest').map((name) => name.toLowerCase())
 const WEIGHT = Math.min(1, Math.max(0, Number(process.env.PEER_WEIGHT ?? 1)))
 const PER_PEER = (Number(process.env.PEER_MB) || 2) * 1e6
-const MAX_PEERS = 16
+const MAX_SLICES = 16
 const REFRESH = (Number(process.env.PEER_REFRESH ?? 6) || 0) * 3600000
 const HEARTBEAT = process.env.HEARTBEAT || '/tmp/alive'
 const TRACKERS = list(process.env.TRACKERS)
@@ -111,16 +115,20 @@ async function library() {
     return plain(source.shape(fs.readFileSync(file, 'utf8')))
 }
 
-// How many peers: PEERS, or for git, enough to hold the text.
-const peerCount = (text) =>
-    Number(process.env.PEERS) > 0 ? Number(process.env.PEERS) : DATA === 'git' ? Math.min(MAX_PEERS, Math.max(1, Math.ceil(text.length / PER_PEER))) : 8
+// How many peers: PEERS, else one for git (so a visitor connects to a
+// server once), and eight test peers, each its own voter.
+const PEER_COUNT = Number(process.env.PEERS) > 0 ? Number(process.env.PEERS) : DATA === 'git' ? 1 : 8
 
-// Contiguous slices, cut at line ends, one per peer. Text past what the
-// peers can hold is left out, and said so.
+// How many slices: one per test peer; for git, enough to hold the text.
+const sliceCount = (text) =>
+    DATA === 'git' ? Math.min(MAX_SLICES, Math.max(PEER_COUNT, Math.ceil(text.length / PER_PEER))) : PEER_COUNT
+
+// Contiguous slices, cut at line ends. Text past what the slices can hold
+// is left out, and said so.
 function slices(text) {
-    const count = peerCount(text)
+    const count = sliceCount(text)
     const size = Math.min(PER_PEER, Math.ceil(text.length / count))
-    if (size * count < text.length) log(`only ${((size * count) / 1e6).toFixed(1)}M of ${(text.length / 1e6).toFixed(1)}M characters fit in ${count} peers (PEERS, PEER_MB)`)
+    if (size * count < text.length) log(`only ${((size * count) / 1e6).toFixed(1)}M of ${(text.length / 1e6).toFixed(1)}M characters fit in ${count} slices (PEERS, PEER_MB)`)
     const out = []
     let at = 0
     while (out.length < count && at < text.length) {
@@ -133,22 +141,32 @@ function slices(text) {
     return out
 }
 
-// A peer's text, indexed; null holds nothing (a slice gone after a refresh).
-function remember(peer, text) {
+// The slices each peer holds: every PEER_COUNT-th, from its own number.
+const deal = (parts) => Array.from({ length: PEER_COUNT }, (_, n) => parts.filter((_, i) => i % PEER_COUNT === n))
+
+// A peer's slices, each indexed on its own; none: it holds nothing.
+function remember(peer, texts) {
     const t = performance.now()
-    peer.memory = text ? index(text) : null
-    peer.chars = text.length
-    if (text) log(`peer ${peer.n}: ${(text.length / 1e6).toFixed(2)}M characters indexed in ${Math.round(performance.now() - t)} ms`)
+    peer.memories = texts.map((text) => index(text))
+    peer.chars = texts.reduce((sum, text) => sum + text.length, 0)
+    if (texts.length) {
+        log(`peer ${peer.n}: ${(peer.chars / 1e6).toFixed(2)}M characters in ${texts.length} slice${texts.length > 1 ? 's' : ''}, indexed in ${Math.round(performance.now() - t)} ms`)
+    }
 }
 
-function startPeer(n, text, rtcConfig) {
-    const peer = { n, memory: null, chars: 0, wires: 0, asked: 0, matched: 0 }
-    remember(peer, text)
+// What a peer remembers of how `context` goes on: every slice's lookup,
+// combined as one answer (combine, in memory.js: the slices whose match is
+// near the longest vote, so a line two slices hold counts once), or none.
+const recollect = (peer, context) => combine(peer.memories.map((memory) => ({ ...lookup(memory, context), w: 1 })))
+
+function startPeer(n, texts, rtcConfig) {
+    const peer = { n, memories: [], chars: 0, wires: 0, asked: 0, matched: 0 }
+    remember(peer, texts)
     const client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false, tracker: { rtcConfig } })
     client.on('error', (err) => log(`peer ${n}: ${err.message || err}`))
     const Memory = memoryExtension((message, wire) => {
         if (typeof message.q !== 'number' || typeof message.c !== 'string') return
-        const answer = peer.memory ? lookup(peer.memory, message.c) : { L: 0, spans: [] }
+        const answer = recollect(peer, message.c) ?? { L: 0, spans: [] }
         peer.asked++
         if (answer.spans.length) peer.matched++
         if (Math.random() < DROP) return
@@ -175,8 +193,8 @@ log(`webrtc: ${describePorts(portRange, connections)}`)
 const beat = () => fs.writeFileSync(HEARTBEAT, String(Date.now()))
 let text = await library()
 if (!text) log(DATA === 'git' ? 'PEER_SOURCES gave no text; nothing to remember (set it, or check the sources above)' : `${DATA} is empty`)
-const peers = slices(text).map((slice, n) => startPeer(n, slice, rtcConfig))
-log(`${peers.length} peers remember ${DATA} in ${CHATS.map((c) => `"${c}"`).join(', ')} (open ?chat=${CHATS[0]}), counting ${WEIGHT}; trackers: ${TRACKERS.join(', ') || 'none'}`)
+const peers = deal(slices(text)).map((held, n) => startPeer(n, held, rtcConfig))
+log(`${peers.length} peer${peers.length > 1 ? 's' : ''} remember${peers.length > 1 ? '' : 's'} ${DATA} in ${CHATS.map((c) => `"${c}"`).join(', ')} (open ?chat=${CHATS[0]}), counting ${WEIGHT}; trackers: ${TRACKERS.join(', ') || 'none'}`)
 beat()
 setInterval(() => {
     beat()
@@ -191,9 +209,8 @@ if (DATA === 'git' && REFRESH) {
         if (fresh === null || fresh === text) return
         text = fresh
         const parts = slices(text)
-        parts.forEach((slice, n) => (peers[n] ? remember(peers[n], slice) : peers.push(startPeer(n, slice, rtcConfig))))
-        for (const peer of peers.slice(parts.length)) remember(peer, '')
-        log(`refreshed: ${(text.length / 1e6).toFixed(2)}M characters in ${parts.length} peers`)
+        deal(parts).forEach((held, n) => remember(peers[n], held))
+        log(`refreshed: ${(text.length / 1e6).toFixed(2)}M characters in ${parts.length} slices, ${peers.length} peer${peers.length > 1 ? 's' : ''}`)
     }, REFRESH)
 }
 

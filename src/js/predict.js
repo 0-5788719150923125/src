@@ -103,24 +103,23 @@ export function pick(logits, { vocab, allowed, stops, pending = '', recent = new
 // What the swarm's memory says about the next token. `spans` are [text,
 // share] pairs, each a way the line went on elsewhere; `written` is what the
 // writer has written so far. Spans that no longer agree with it drop out;
-// each one left lends its share to every token that would start its rest,
-// except tokens of spaces alone (a bare " " before "moon" would leave the
-// writer a word without its space, which it rarely goes on from).
-// `byString` maps a token's text to its id.
-export function boostFrom(spans, written, byString, longest = 16) {
+// each one left lends its share to the token its rest starts with, as the
+// tokenizer would write it: `first(rest)`, a token id, or undefined for none
+// (the writer gives none for a token of spaces alone: a bare " " before
+// "moon" would leave it a word without its space, which it rarely goes on
+// from). It used to lend to every token that merely started the rest, " l"
+// as much as " little", and the writer drew those spellings it never
+// writes: words split oddly, which it went on from badly ("a secret t
+// wit"), and more steps before each word showed (2026-11-25).
+export function boostFrom(spans, written, first) {
     const boost = new Map()
     let total = 0
     for (const [text, share] of spans) if (text.startsWith(written) && text.length > written.length) total += share
     if (!total) return boost
     for (const [text, share] of spans) {
-        if (!text.startsWith(written)) continue
-        const rest = text.slice(written.length)
-        for (let k = 1; k <= Math.min(longest, rest.length); k++) {
-            const piece = rest.slice(0, k)
-            if (!/\S/.test(piece)) continue
-            const id = byString.get(piece)
-            if (id !== undefined) boost.set(id, (boost.get(id) || 0) + share / total)
-        }
+        if (!text.startsWith(written) || text.length === written.length) continue
+        const id = first(text.slice(written.length))
+        if (id !== undefined) boost.set(id, (boost.get(id) || 0) + share / total)
     }
     return boost
 }
