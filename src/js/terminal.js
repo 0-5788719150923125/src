@@ -81,6 +81,21 @@ const SPEED = 30 // pixels a second
 let loop = 0 // how far the text slides before it repeats; 0 while it fits
 let offset = 0
 let last = null
+// The ticker runs on time, as a real one would: wherever it is shown, it
+// is where it would be had it slid on all along, closed or hidden. So the
+// page keeps where it was along its loop, how long the loop was, and when
+// ("offset loop time"), and the next page to open works out how far it has
+// gone since. That is taken as a share of the loop, which holds whatever
+// the widths are now (the state's numbers change, the font may still load).
+const KEPT = 'ticker'
+let resume = null // [offset, loop, time] from the last page, until it first slides
+function keepPlace() {
+    if (!resume)
+        localStorage.setItem(
+            KEPT,
+            `${loop ? offset % loop : 0} ${loop} ${Date.now()}`
+        )
+}
 
 // The state, looping when it is wider than the screen: the text is followed
 // by a copy of itself, and once the copy has slid to where the text began,
@@ -101,10 +116,17 @@ function tick() {
             ? echo.getBoundingClientRect().left -
               text.getBoundingClientRect().left
             : 0
+    if (loop && resume) {
+        const [was, length, time] = resume
+        const gone = (SPEED * (Date.now() - time)) / 1000
+        offset = (((was + gone) % length) / length) * loop
+        resume = null
+    }
     if (loop && last === null) {
         last = performance.now()
         requestAnimationFrame(slide)
     }
+    keepPlace()
 }
 
 // Moves at a steady speed, measured in pixels rather than as a fraction of
@@ -116,8 +138,9 @@ function slide(now) {
         ticker.style.removeProperty('transform')
         return
     }
-    // A hidden tab gets no frames; it picks up where it left off.
-    const elapsed = Math.min(Math.max(now - last, 0), 100)
+    // By the time gone, not the frames: a hidden tab gets none, and catches
+    // up as it is shown.
+    const elapsed = Math.max(now - last, 0)
     offset = (offset + (SPEED * elapsed) / 1000) % loop
     last = now
     ticker.style.transform = `translateX(${-offset}px)`
@@ -160,8 +183,19 @@ export async function start({ welcome = true } = {}) {
     indent()
     ghost.attach()
     print(null, banner(t('banner.title')))
+    const kept = (localStorage.getItem(KEPT) ?? '').split(' ').map(Number)
+    if (kept.length === 3 && kept.every(Number.isFinite) && kept[1] > 0)
+        resume = kept
     tick()
     setInterval(tick, 500)
+    // The state comes in a moment (the chat, the model's status): shown as
+    // it does, not at the next tick, and the place kept as the page closes.
+    const soon = setInterval(() => {
+        if (!Object.keys(state.snapshot()).length) return
+        clearInterval(soon)
+        tick()
+    }, 50)
+    addEventListener('pagehide', keepPlace)
     pinTicker()
     // Stations heard before are seeded again from what this browser holds.
     radio.restore()
