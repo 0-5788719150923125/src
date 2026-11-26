@@ -136,14 +136,6 @@ function pinTicker() {
 
 // ------------------------------------------------------------ start
 
-const ATOM = `
-<div id="atom">
-    <div id="nucleus"></div>
-    <div class="orbit"><div class="electron"></div></div>
-    <div class="orbit"><div class="electron"></div></div>
-    <div class="orbit"><div class="electron"></div></div>
-</div>`
-
 // `welcome`: whether to say the welcome line once the model is ready (the
 // browser extension's background says its own).
 export async function start({ welcome = true } = {}) {
@@ -167,7 +159,7 @@ export async function start({ welcome = true } = {}) {
     new ResizeObserver(indent).observe(prompt)
     indent()
     ghost.attach()
-    print(null, banner(ATOM, t('banner.title')))
+    print(null, banner(t('banner.title')))
     tick()
     setInterval(tick, 500)
     pinTicker()

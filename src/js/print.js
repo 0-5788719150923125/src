@@ -110,9 +110,18 @@ export const link = (href, label) => ({
     html: `<a href="${escape(href)}" target="_blank" rel="noopener">${escape(label)}</a>`
 })
 
-// Art, a title, the date, and where to start.
-export const banner = (art, title) => ({
-    html: `${art}<h1>${escape(title)}</h1>${html('banner.lines', { date: formatDate() }).html}<br><br>`
+// The atom, the title, the date, and where to start: the banner the
+// terminal opens with, and /chat starts a chat with.
+const ATOM = `
+<div id="atom">
+    <div id="nucleus"></div>
+    <div class="orbit"><div class="electron"></div></div>
+    <div class="orbit"><div class="electron"></div></div>
+    <div class="orbit"><div class="electron"></div></div>
+</div>`
+
+export const banner = (title) => ({
+    html: `${ATOM}<h1>${escape(title)}</h1>${html('banner.lines', { date: formatDate() }).html}<br><br>`
 })
 
 // The handle before the command line: who you are.

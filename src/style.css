@@ -150,13 +150,6 @@ output pre {
   list-style-type: none;
 }
 
-/* The welcome sigil. */
-.logo {
-  float: left;
-  width: 5em;
-  margin: 0 1em 1em 0;
-}
-
 /* ------------------------------------------------------------ command line */
 
 /* The command line wraps, as a terminal's does: the prompt sits at the

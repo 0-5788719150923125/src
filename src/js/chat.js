@@ -37,7 +37,6 @@ import {
     roomFile,
     sendTo
 } from './room.js'
-import { createSigil } from './sigil.js'
 import { state } from './state.js'
 import { html, t } from './text.js'
 import { announce, destroy, getChatClient } from './torrent.js'
@@ -77,14 +76,12 @@ export async function connect() {
     }
 }
 
-// /chat <name>: a fresh screen, your sigil, and the new chat.
+// /chat <name>: a fresh screen, the banner, and the new chat.
 export async function setChat([name]) {
     if (elsewhere) return elsewhere.setChat(name)
     if (!name) return say(html('chat.usage'))
     clear()
-    const keys = signedIn()
-    if (keys)
-        print(null, banner(await createSigil(keys.pub), t('banner.connected')))
+    print(null, banner(t('banner.connected')))
     await enter(name)
 }
 

@@ -1,6 +1,6 @@
 // Randomness: Math.random where any answer will do, and a seeded draw where
 // the same input must give the same answer on every device (daemon names,
-// sigils).
+// the radio's order).
 
 export const pick = (array) => array[Math.floor(Math.random() * array.length)]
 
