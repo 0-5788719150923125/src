@@ -215,6 +215,15 @@ import { ahead } from '../src/js/predict.js'
             .finally(() => (connecting = null))
     }
 
+    // The host lets its model go after a while without a guess, and says
+    // it is not ready (host.js). A field in use calls it back; it says
+    // ready once the model is up again, and the guess follows. (A new
+    // connection calls it back too.)
+    function wake() {
+        connect()
+        if (!ready) send({ wake: true })
+    }
+
     function onHost(message) {
         if (typeof message?.ready === 'boolean') {
             const was = ready
@@ -283,7 +292,7 @@ import { ahead } from '../src/js/predict.js'
         if (!field) return
         const state = caretIn(field)
         if (!state?.atEnd || !wanted(state.before)) return
-        connect()
+        wake()
         if (!ready) return
         const id = ++next
         const { before } = state
@@ -671,6 +680,7 @@ import { ahead } from '../src/js/predict.js'
         drop()
         field = found
         last = null
+        if (field) wake()
         draw()
     }
 

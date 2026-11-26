@@ -94,7 +94,7 @@ Also not done:
 
 - The model, SmolLM2-135M-Instruct: 137 MB, downloaded once. On a fresh browser profile, the first ghost showed 16 seconds after typing began. The terminal's ghost uses the background's model: ready in 0.13 s when warm, 2.9 s cold.
 - Firefox gives extension pages no cross-origin isolation (bug 1673477), so the model runs on one thread there; in Chrome, on up to four.
-- The background lets the model go after 30 minutes without a guess; the weights stay cached.
+- The background lets the model go after 30 minutes without a guess; the weights stay cached. A text field taking the focus calls it back, so it is up again within a few seconds, often before the first pause in typing.
 - Shipped inside: transformers.js 4.3.2, ONNX Runtime Web 1.31.0-dev (its CPU-only build, since the default one calls `new Function`, which Chrome's extension rules forbid), and WebTorrent 3.0.21.
 - Chrome: Manifest V3, an offscreen document with the reasons WORKERS, AUDIO_PLAYBACK and WEB_RTC. Firefox: Manifest V2, a persistent background page, version 140 or later.
 

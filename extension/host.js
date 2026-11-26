@@ -11,19 +11,20 @@
 // lets it go after IDLE without a guess (the weights stay cached, so the
 // next start takes seconds).
 //
-// Two kinds of port:
+// Three kinds of port:
 // - 'pen', a page: it sends { guess: { id, line, title, site } } (line:
-//   what is typed before the caret) and { stop }; it hears { ready }, then
-//   { ghost: { id, text } } as the guess is written, and { ghost: { id,
-//   done } }. Its guesses read the page's title and host before the text
-//   (ghost.preamble), and never the chat or its memory: a question to the
-//   chat would show it what is typed elsewhere. They ask the swarm's
+//   what is typed before the caret), { stop }, and { wake } when one of its
+//   fields has the focus while the model is let go; it hears { ready },
+//   then { ghost: { id, text } } as the guess is written, and { ghost: {
+//   id, done } }. Its guesses read the page's title and host before the
+//   text (ghost.preamble), and never the chat or its memory: a question to
+//   the chat would show it what is typed elsewhere. They ask the swarm's
 //   memory privately instead (private.js, answering.js): an encrypted query
 //   that the answering peers cannot read; they learn only that a question
-//   came, and when. Any peer can answer: the library servers (counted
-//   fully when the build pins their keys) and browsers, this one too (from
-//   what its terminal kept of the chat), so nothing hangs on a server. One
-//   query per word, fetched as the word starts ({ prefetch: { line } }) and
+//   came, and when. Any peer can answer: the library servers (counted fully
+//   when the build pins their keys) and browsers, this one too (from what
+//   its terminal kept of the chat), so nothing hangs on a server. One query
+//   per word, fetched as the word starts ({ prefetch: { line } }) and
 //   answering every guess within it; never a follow-up, so how often the
 //   host asks does not depend on what came back.
 // - 'terminal', the extension's terminal (terminal.js): it speaks the
@@ -230,6 +231,7 @@ function pageGuess(port, { id, line, title, site }) {
 function onPage(port, message) {
     if (message?.guess) pageGuess(port, message.guess)
     else if (message?.stop) stopFor(port)
+    else if (message?.wake) rest()
     else if (typeof message?.prefetch?.line === 'string' && asker?.ready())
         asker.prefetch(message.prefetch.line.slice(-PAGE_TEXT))
 }
