@@ -32,12 +32,17 @@ test('/about is the overview, with its links', () => {
 })
 
 // Every key the code asks for exists, and every entry outside the lore is
-// asked for: a translation can follow the files alone.
-const dir = path.join(import.meta.dirname, '..', 'src', 'js')
-const code = fs
-    .readdirSync(dir)
-    .filter((file) => file.endsWith('.js'))
-    .map((file) => fs.readFileSync(path.join(dir, file), 'utf8'))
+// asked for: a translation can follow the files alone. The code is the
+// site's, the browser extension's, and the two scripts that read the
+// extension's listing.
+const root = path.join(import.meta.dirname, '..')
+const scripts = (dir) =>
+    fs
+        .readdirSync(path.join(root, dir))
+        .filter((file) => file.endsWith('.js'))
+        .map((file) => path.join(root, dir, file))
+const code = [...scripts('src/js'), ...scripts('extension'), path.join(root, 'scripts', 'extension.js'), path.join(root, 'scripts', 'stores.js')]
+    .map((file) => fs.readFileSync(file, 'utf8'))
     .join('\n')
 const asked = [...code.matchAll(/\b(?:t|html|list|source)\('([\w.-]+)'/g)].map((m) => m[1])
 

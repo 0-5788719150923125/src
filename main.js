@@ -13,6 +13,10 @@
 //   node main.js --undeploy   take that deploy down again (asks first)
 //   node main.js --peers 8    test peers that remember a library (see
 //                             containers/node/peers.js)
+//   node main.js --extension  build the browser extension (scripts/extension.js)
+//   node main.js --publish chrome|firefox|all
+//                             build it, then upload it to the stores
+//                             (scripts/stores.js; asks first)
 
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -21,6 +25,7 @@ import { parseArgs } from 'node:util'
 import { DEFAULT_OUT, ROOT, build, trackerList } from './scripts/build.js'
 import { DEFAULT_PROJECT, deploy, undeploy } from './scripts/deploy.js'
 import { loadEnv } from './scripts/env.js'
+import { buildExtension, sourceArchive } from './scripts/extension.js'
 import { updateLicense } from './scripts/license.js'
 import { serve } from './scripts/serve.js'
 
@@ -30,6 +35,8 @@ const { values: args } = parseArgs({
         test: { type: 'boolean' },
         deploy: { type: 'boolean' },
         undeploy: { type: 'boolean' },
+        extension: { type: 'boolean' },
+        publish: { type: 'string' },
         yes: { type: 'boolean', short: 'y' },
         out: { type: 'string', default: DEFAULT_OUT },
         host: { type: 'string', default: '127.0.0.1' },
@@ -47,6 +54,7 @@ if (args.help) {
     console.log(`usage: node main.js [--build | --test | --deploy | --undeploy [--yes]]
                     [--port N] [--host ADDR] [--out DIR] [--project NAME] [--domain NAME]
        node main.js --peers N [--data tinystories|quijote|git|FILE] [--chat NAME]
+       node main.js --extension | --publish chrome|firefox|all [--yes]
 
   (no flag)   build, then serve at http://localhost:8000 with live reload;
               restarts itself when main.js, scripts/ or .env change
@@ -58,7 +66,11 @@ if (args.help) {
               (--yes skips the question)
   --peers N   start N test peers that remember a library and answer the
               ghost text's memory questions in a chat (default memorytest;
-              open http://localhost:8000/?chat=memorytest to meet them)`)
+              open http://localhost:8000/?chat=memorytest to meet them)
+  --extension build the browser extension into build/extension/ (a folder
+              to load unpacked, and a zip, per browser)
+  --publish S build it, then upload it to a store: chrome, firefox or all
+              (credentials in .env); shows the plan and asks first`)
     process.exit(0)
 }
 
@@ -99,7 +111,7 @@ if (args.test) {
 // builds and serves the site (cached once imported) and to .env take effect
 // without a restart by hand. Edits under src/ only need a rebuild, which
 // the server does itself (scripts/serve.js).
-const serving = !args.build && !args.deploy && !args.undeploy
+const serving = !args.build && !args.deploy && !args.undeploy && !args.extension && args.publish === undefined
 if (serving && !process.env.SRC_WATCHED) {
     const watched = ['main.js', 'scripts', '.env'].map((name) => path.join(ROOT, name)).filter((file) => fs.existsSync(file))
     const child = spawn(
@@ -119,6 +131,12 @@ async function run() {
     // Read after loadEnv, so .env can name the project.
     const project = args.project || process.env.CLOUDFLARE_PAGES_PROJECT || DEFAULT_PROJECT
     if (args.undeploy) process.exit((await undeploy({ project, domain: args.domain, yes: args.yes })) ? 0 : 1)
+    if (args.extension || args.publish !== undefined) {
+        const built = await buildExtension()
+        if (args.publish === undefined) process.exit(0)
+        const { publish } = await import('./scripts/stores.js')
+        process.exit((await publish(args.publish, { ...built, source: sourceArchive(), yes: args.yes })) ? 0 : 1)
+    }
     const out = await build(path.resolve(args.out), { deploy: args.deploy })
     if (args.deploy) {
         process.exit((await deploy(out, { project, domain: args.domain })) ? 0 : 1)

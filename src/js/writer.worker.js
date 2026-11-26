@@ -19,6 +19,22 @@ import { weight } from './memory.js'
 import { boostFrom, common, consume, pick, split, start } from './predict.js'
 import { isPlain } from './room.js'
 
+// Where ONNX Runtime's own files are, relative to this module: null on the
+// site, where transformers.js fetches them from jsdelivr. The browser
+// extension ships them (stores refuse code from elsewhere), and its build
+// (scripts/extension.js) fills this in, as it points the import above at
+// its own copy. They are the CPU-only build, which is all this runs on.
+const RUNTIME = null
+if (RUNTIME) {
+    env.backends.onnx.wasm.wasmPaths = {
+        mjs: new URL(`${RUNTIME}ort-wasm-simd-threaded.mjs`, import.meta.url).href,
+        wasm: new URL(`${RUNTIME}ort-wasm-simd-threaded.wasm`, import.meta.url).href
+    }
+    // Its copy in Cache Storage would be loaded from a blob: URL, which an
+    // extension's pages may not run.
+    env.useWasmCache = false
+}
+
 const MODEL = 'HuggingFaceTB/SmolLM2-135M-Instruct'
 const NAME = 'SmolLM2-135M'
 // Tokens of conversation the model reads: once they pass MOST, the start
@@ -234,10 +250,14 @@ function firstToken(rest) {
 // line, and the length of the match that found them. The room's peers are
 // asked at the same time; their answers come in `heard` as they arrive
 // (`done` once no more will), and steer what is left to write.
-async function guess(id, line, stopped, memory, done) {
+//
+// `preface`, when given, is read before the line instead of the room's
+// conversation: the browser extension's guesses in other sites' text
+// fields (extension/host.js), which have nothing to do with the chat.
+async function guess(id, line, stopped, memory, done, preface = null) {
     const { stable, tail } = split(line)
     const typed = encode(stable)
-    let scores = await read([...context(), ...typed], stopped)
+    let scores = await read([...(typeof preface === 'string' ? encode(preface) : context()), ...typed], stopped)
     if (!scores) return
     const recent = new Set(typed)
     let pending = tail
@@ -328,7 +348,7 @@ onmessage = ({ data }) => {
         if (model) warm()
     } else if (data.command === 'guess') {
         const mine = ++turn
-        if (model) queue(() => guess(data.id, data.line, () => turn !== mine, data.memory, data.done))
+        if (model) queue(() => guess(data.id, data.line, () => turn !== mine, data.memory, data.done, data.preface))
     } else if (data.command === 'memory') {
         heard = { id: data.id, seq: data.seq, memory: data.memory, done: data.done }
     } else if (data.command === 'stop') {

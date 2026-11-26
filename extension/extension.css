@@ -1,0 +1,24 @@
+/* The extension's terminal, beside the site's style.css. A popup has no
+   size of its own until its page gives it one: this is about the most a
+   browser allows (800 by 600). The side panel is as wide as the browser
+   makes it. */
+
+html.popup,
+html.popup body {
+  width: 780px;
+  height: 580px;
+}
+
+/* The browser draws the popup's window, and the side panel, with rounded
+   corners, which a page cannot change: the terminal keeps clear of them.
+   The ticker's black band covers the inset at the top as the screen
+   scrolls under it. */
+html.popup #container,
+html.panel #container {
+  padding: 0 calc(1em + 8px) calc(3em + 8px);
+}
+
+html.popup #pen,
+html.panel #pen {
+  padding-top: 10px;
+}

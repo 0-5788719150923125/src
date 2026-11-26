@@ -66,9 +66,16 @@ const NEAR_TOP = 2
 let session = 0
 let objectUrl = null
 
+// The browser extension plays the radio in its background page, which
+// outlives its popup (extension/host.js); its terminal hands /radio there
+// (extension/terminal.js), with { radio, restore }. Null on the site.
+let elsewhere = null
+export const playElsewhere = (radio) => (elsewhere = radio)
+
 // /radio turns the radio on, or off when it is on. It plays the first
 // station on the dial (there is one; more would need more of a command).
 export function radio() {
+    if (elsewhere) return elsewhere.radio()
     if (state.get('radio')) {
         stop()
         return say(t('radio.off'))
@@ -213,13 +220,16 @@ async function fetchTorrent(frequency) {
             const response = await fetch(url, { cache: 'no-cache' })
             if (!response.ok) throw new Error(`${url}: ${response.status}`)
             const buf = new Uint8Array(await response.clone().arrayBuffer())
-            if (cache) await cache.put(key, response)
+            // Kept, for when no source answers. (The browser extension's
+            // pages cannot keep their own addresses in Cache Storage, and
+            // need not: the .torrent is in the extension.)
+            if (cache) await cache.put(key, response).catch(() => {})
             return { buf, webSeed: Boolean(config.seed) && url === seedTorrentUrl(frequency) }
         } catch (err) {
             error = err
         }
     }
-    const kept = cache && (await cache.match(key))
+    const kept = cache && (await cache.match(key).catch(() => null))
     if (!kept) throw error
     return { buf: new Uint8Array(await kept.arrayBuffer()), webSeed: false }
 }
@@ -291,6 +301,7 @@ async function forgetOldVersions(torrent) {
 // served to other listeners without anyone typing /radio, then top up what
 // it holds. Nothing plays.
 export async function restore() {
+    if (elsewhere) return elsewhere.restore()
     for (const frequency of Object.keys(config.stations)) {
         tune(frequency)
             .then((torrent) => setTimeout(() => cache(torrent), CACHE_DELAY))

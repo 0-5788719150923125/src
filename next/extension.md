@@ -1,7 +1,10 @@
 # Extension: the terminal in the browser, ghost text on every page
 
-> Status: **idea, not started** (2026-11-21). Nothing is built. Written
-> after ghost text shipped on the site (see CLAUDE.md).
+> Status: **phases 1 and 2 built** (2026-11-25; written as an idea on
+> 2026-11-21, after ghost text shipped on the site). The terminal opens
+> from the toolbar button and in the side panel; ghost text works in plain
+> inputs, textareas and contenteditable editors on any site. See "What was
+> built" at the end; the rest of this note is the plan as it was.
 
 ## The one line
 
@@ -130,8 +133,61 @@ extensions insert text there. All of this is unverified.
 
 - Does Firefox still accept a Manifest V2 background page, and if not,
   does a Manifest V3 background keep WebRTC connections alive?
+  **Answered:** it does (no deprecation announced as of 2026-11). Its V3
+  background is an event page unloaded after 30 s without an extension
+  event; an open port does not hold it, nor does a Worker or WebRTC. So
+  Firefox gets V2 with a persistent background (the model would otherwise
+  start again after every pause in typing).
 - How long does Chrome keep an offscreen document for WebRTC or Workers?
+  **Answered:** until closed (or the extension reloads): only
+  AUDIO_PLAYBACK has a lifetime (30 s of silence), and only when it is the
+  sole reason (Chromium's lifetime enforcers).
 - Is ONNX Runtime's Firefox thread hang (CLAUDE.md) the same in an
-  extension's background page?
+  extension's background page? **Moot for now:** Firefox gives extension
+  pages no cross-origin isolation (bug 1673477), so the model runs on one
+  thread there, where the hang never happened. The watchdog is kept.
 - Can one tab's guess requests starve another's? (One model, many tabs: the
-  focused field should win.)
+  focused field should win.) **As built:** one guess at a time; a new one,
+  from any tab, stops the last, so the field being typed in wins.
+
+## What was built (2026-11-25)
+
+- `scripts/extension.js` builds `build/extension/{chromium,firefox}/`
+  and their zips from the site's deploy build plus `extension/`, as
+  planned: a second target, not a fork. The popup and side panel are the
+  site's `index.html` with `extension/terminal.js` added (`/ghost`).
+- The model: `extension/host.js` runs the site's `writer.worker.js` once
+  per browser (Chrome: offscreen document, opened by `background.js` on
+  the first page that asks; Firefox: the background page). Pages' guesses
+  carry their own `preface` (the page's title and host) instead of the
+  chat, and no swarm memory: questions would show the chat what is typed
+  elsewhere. The terminal uses the same model, over a port that carries
+  the worker's own messages (`writer.useWorker`), with its chat and memory
+  as on the site.
+- The ghost: `extension/page.js`, a content script in every frame, from
+  document start. A closed shadow root in a popover (the top layer) draws
+  the guess over the field: for inputs and textareas, after an unseen copy
+  of the text laid out like the field's (so wrapping and scrolling match);
+  for contenteditable, from the caret's own box, wrapping within the
+  editor. Accepted words go in with `execCommand('insertText')`.
+- The radio plays in the background (added the same day, after the
+  user's first try: it stopped when the popup closed): `host.js` runs the
+  site's `radio.js` (Chrome's offscreen document gained the AUDIO_PLAYBACK
+  and WEB_RTC reasons; WORKERS keeps it open through silence), and the
+  terminal hands it `/radio` and prints what it says (`playElsewhere` in
+  `radio.js`, `printElsewhere` in `print.js`). The stations are joined
+  when a terminal first opens, then shared while the background runs.
+  Extension pages cannot register a service worker, so the radio plays
+  over HTTP (the mirror), as the site does without one. Chat still lives
+  in the terminal: it is as alive as the popup (the side panel stays
+  open).
+- The popup is a new page each time it opens, so `terminal.js` (now the
+  page's entry, in place of `js/main.js`) keeps the screen's lines and the
+  chat in `storage.session`, and puts them back under the new banner;
+  lines the radio said while it was closed follow.
+- Vendored: transformers.js and ONNX Runtime's CPU-only build (its
+  default glue calls `new Function`), fetched at build time and pinned by
+  hash; WebTorrent as published. Weights from Hugging Face, as on the
+  site.
+- Not done: rich editors' own quirks beyond what execCommand covers,
+  canvas editors (phase 4), background chat, Edge's store.

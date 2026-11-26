@@ -79,6 +79,12 @@ export function stop() {
 const START_LIMIT = 12000
 let watchdog = null
 
+// How the worker is made. The browser extension's terminal uses the one its
+// background runs for the whole browser instead (extension/terminal.js),
+// which speaks the same messages.
+let makeWorker = () => new Worker(new URL('./writer.worker.js', import.meta.url), { type: 'module' })
+export const useWorker = (make) => (makeWorker = make)
+
 export function load() {
     if (worker) return
     // Shown at once: the worker and its library take a moment to start
@@ -92,7 +98,7 @@ export function load() {
 }
 
 function start(threads = 0) {
-    worker = new Worker(new URL('./writer.worker.js', import.meta.url), { type: 'module' })
+    worker = makeWorker()
     worker.onmessage = ({ data }) => {
         if (data.starting && !threads) {
             clearTimeout(watchdog)

@@ -104,7 +104,10 @@ test('mints nothing without its variables, for other sites, or when minting fail
     const cross = await call(ENV, { headers: { 'Sec-Fetch-Site': 'cross-site' } })
     assert.equal(cross.status, 403)
     assert.equal(cross.seen.length, 0)
+    assert.equal((await call(ENV, { headers: { 'Sec-Fetch-Site': 'same-site' } })).status, 403)
     assert.equal((await call(ENV, { headers: { 'Sec-Fetch-Site': 'same-origin' } })).body.iceServers.length, 2)
+    // The browser extension, in Chrome.
+    assert.equal((await call(ENV, { headers: { 'Sec-Fetch-Site': 'none' } })).body.iceServers.length, 2)
     assert.equal((await call(ENV, { mint: 'broken' })).body.reason, 'mint failed')
 })
 

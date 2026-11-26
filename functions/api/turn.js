@@ -109,10 +109,11 @@ export async function onRequestGet(context) {
     // Alerts go out after the reply; the dev server has no waitUntil.
     const later = (promise) => (context.waitUntil ? context.waitUntil(promise) : promise)
     if (!env.TURN_KEY_ID || !env.TURN_KEY_TOKEN || !env.ACCOUNT_ID || !env.TURN_USAGE_TOKEN) return reply({ iceServers: [], reason: 'off' })
-    // Only the site's own pages. Scripts can lie about this; other sites'
-    // pages cannot.
+    // Only the site's own pages, and the browser extension's (Chrome says
+    // "none" for an extension with access to the site, Firefox
+    // "same-origin"). Scripts can lie about this; other sites' pages cannot.
     const site = request.headers.get('Sec-Fetch-Site')
-    if (site && site !== 'same-origin') return reply({ iceServers: [], reason: 'forbidden' }, 403)
+    if (site && site !== 'same-origin' && site !== 'none') return reply({ iceServers: [], reason: 'forbidden' }, 403)
     const cap = Number(env.TURN_CAP_GB ?? 90) * 1e9
     const days = Number(env.TURN_CAP_DAYS) > 0 ? Number(env.TURN_CAP_DAYS) : 3
     const ttl = Math.min(Math.max(Number(env.TURN_TTL) || 3600, 300), 172800)

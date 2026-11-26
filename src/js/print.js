@@ -31,6 +31,12 @@ const MAX_LINES = 1000
 const output = document.querySelector('#container output')
 const page = () => document.documentElement.scrollHeight
 
+// Where lines go on a page with no screen: the browser extension's
+// background page, where its radio plays, passes them on to the
+// extension's terminals (extension/host.js). Null on the site.
+let elsewhere = null
+export const printElsewhere = (to) => (elsewhere = to)
+
 // Whether the reader is at the bottom of the page, where new lines are
 // followed.
 let atBottom = true
@@ -55,6 +61,7 @@ const el = (tag, className, ...children) => {
 //   scroll     'always' (the default), 'follow' (only a reader already at
 //              the bottom), or 'never'
 export function print(speaker, body, { block = false, scroll = 'always' } = {}) {
+    if (elsewhere) return elsewhere(speaker, body, { block, scroll })
     const text = el('span', 'text')
     if (block) text.style.display = 'block'
     if (typeof body === 'string') text.textContent = body

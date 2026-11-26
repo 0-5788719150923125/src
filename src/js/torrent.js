@@ -98,11 +98,12 @@ export const getChatClient = () => (chatting ??= startChatClient())
 
 const STUN = { urls: ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] }
 
-// { iceServers, ttl } from /api/turn; iceServers is empty when there is no
-// relay to be had, and `off` says none is deployed at all.
+// { iceServers, ttl } from /api/turn (the site's own, beside the page; the
+// browser extension names the site's in config.turn); iceServers is empty
+// when there is no relay to be had, and `off` says none is deployed at all.
 async function relayServers() {
     try {
-        const response = await fetch('./api/turn', { cache: 'no-store', signal: AbortSignal.timeout(4000) })
+        const response = await fetch(config.turn || './api/turn', { cache: 'no-store', signal: AbortSignal.timeout(4000) })
         if (!response.headers.get('content-type')?.includes('json')) return { iceServers: [], off: true }
         const { iceServers, ttl, reason } = await response.json()
         return { iceServers: Array.isArray(iceServers) ? iceServers : [], ttl: Number(ttl) || 3600, off: reason === 'off' }

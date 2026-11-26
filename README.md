@@ -20,7 +20,7 @@ Type `/help` in the terminal.
 
 The page puts you in a chat as soon as it opens (the one in the address, `?chat=name`, or `trade`). Chats live between browsers, found through WebTorrent trackers, and every message is signed with a key your browser makes and keeps for you.
 
-When you start typing, a small language model running in your tab writes ahead of you as you type, reading the room's conversation. Press Tab to keep a word, or hold it to keep the rest. The room's peers lend it their memory: every visitor's browser keeps the lines of the rooms it has been in (never password rooms), and when someone remembers text that ends the way your line does, what came next there shapes the guess. Text from the room you are in counts most.
+When you start typing, a small language model running in your tab writes ahead of you as you type, reading the room's conversation. Press Tab to keep a word, or hold it to keep the rest. The [browser extension](#the-extension) puts the same terminal behind a toolbar button, and the same model in every text field you type in. The room's peers lend it their memory: every visitor's browser keeps the lines of the rooms it has been in (never password rooms), and when someone remembers text that ends the way your line does, what came next there shapes the guess. Text from the room you are in counts most.
 
 </details>
 
@@ -31,7 +31,8 @@ When you start typing, a small language model running in your tab writes ahead o
 - **[`src/`](src/)** - The site. No bundler: the build copies it and fills in the configuration.
   - **[`src/js/`](src/js/)** - The modules, loaded by the browser as they are.
   - **[`src/text/`](src/text/)** - Every string a visitor reads, as Markdown, by language.
-- **[`scripts/`](scripts/)** - Build, dev server, deploy and vendoring, in Node.
+- **[`extension/`](extension/)** - The browser extension's own parts: the ghost text in other sites' fields, the model they share, and `/ghost`.
+- **[`scripts/`](scripts/)** - Build, dev server, deploy, vendoring, the extension's build and its upload to the stores, in Node.
 - **[`stations.js`](stations.js)** - The radio stations.
 - **[`containers/`](containers/)** - The stack's image: tracker, seeder and web seed.
 - **[`tests/`](tests/)** - Unit tests.
@@ -54,6 +55,8 @@ node main.js --test     # run the tests
 node main.js --deploy   # publish to Cloudflare Pages
 node main.js --undeploy # take it down again: project, domain, DNS, mirror, relay (asks first)
 node main.js --peers 8  # test peers that remember children's stories (see below)
+node main.js --extension          # build the browser extension (see below)
+node main.js --publish chrome     # build it and upload it to a store: chrome, firefox or all (asks first)
 npm run rules           # how the quality rules score their examples; --fit, or a "line"
 ```
 
@@ -107,6 +110,20 @@ With no peer around, the radio can fall back to a mirror: the stations' files in
 ## the relay
 
 Two browsers behind strict NATs, such as a phone on a cellular network, cannot connect to each other directly, so the deploy also sets up a relay for chat: Cloudflare's TURN service. A connection is tried directly first and goes through the relay only when nothing else works. The site's `/api/turn` function hands out credentials that last an hour, and stops handing them out while the account's TURN traffic over the last `CLOUDFLARE_TURN_CAP_DAYS` days is at `CLOUDFLARE_TURN_CAP_GB` (90 GB in 3 days by default). The window slides, so a month can never pass 930 GB, under Cloudflare's free 1,000 GB (give or take the hour of relaying after the cap), and a spike stops the relay within days instead of at the end of the month. With `CLOUDFLARE_ALERT_WEBHOOK` set to a Discord webhook, the function posts to that channel as "The Source" at half the cap, at the cap, and when it cannot read its usage. The radio never uses it. `CLOUDFLARE_TURN=off` turns it off; see [.env.example](.env.example).
+
+## the extension
+
+`node main.js --extension` (`npm run extension`) builds The Source as a browser extension, for Chrome (and its kin: Edge, Brave...) and Firefox, into `build/extension/`: a folder per browser, and the zip each store takes.
+
+- **The terminal:** the toolbar button opens the site's own terminal, with everything in it: chat, the radio, the ghost text. What was on its screen, and the chat it was in, come back when it opens again (until the browser closes). It also opens in the side panel (Chrome) or the sidebar (Firefox), which stays open while you browse, so chat goes on.
+- **The radio plays in the background,** so closing the popup does not stop it; `/radio` again does. Once the terminal has been opened, the extension also shares the songs it holds with other listeners until the browser closes, as an open tab of the site does.
+- **Ghost text everywhere:** in other sites' text fields (inputs, textareas, and the editors chat boxes and mail are made of), the same model guesses how your line goes on, drawn after the caret, faded, with the same wave. Tab keeps a word, held it keeps them all, Escape hides it, and Tab and Escape are left to the page whenever no guess is showing. Never in password, payment, address or other personal-detail fields, never in code editors, and only with the caret at the end of the text. A page can opt a field out with `data-src-ghost="off"`. What is typed goes to the extension's model, in the browser, and nowhere else (the chat's memory is never asked).
+- **One model for the whole browser:** it loads the first time you type in a page or open the terminal, once for every tab and the terminal too (in Chrome, in an offscreen document; in Firefox, in the background page), so the terminal's ghost is ready as the popup opens. It is let go after 30 minutes without a guess. The toolbar button shows its first download.
+- **`/ghost`** in the extension's terminal: `/ghost off` or `/ghost on` everywhere, `/ghost off example.com` for one site (`here` is the tab you opened the popup over).
+
+To try it, load `build/extension/chromium/` in `chrome://extensions` (developer mode, "Load unpacked"), or `build/extension/firefox/manifest.json` in Firefox's `about:debugging` ("This Firefox", "Load Temporary Add-on").
+
+Stores refuse code fetched at runtime, so the build downloads what the site loads from jsdelivr (transformers.js and ONNX Runtime's WebAssembly), checks each file against a pinned hash, and ships it; the model's weights still come from Hugging Face on first use. `node main.js --publish chrome`, `firefox` or `all` builds it and uploads it (Chrome Web Store API v2, addons.mozilla.org API v5), after showing the plan and asking; the credentials, and the one-time setup each store needs, are in [.env.example](.env.example). Raise `version` in `package.json` before each release.
 
 ## test peers
 
