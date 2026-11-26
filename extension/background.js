@@ -15,21 +15,27 @@ const hostIsOpen = async () =>
     (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }))
         .length > 0
 
+// Refused as "a single offscreen document" means one is there: opened
+// meanwhile by another request, or, as the extension restarts (/reset),
+// the old one still closing. So a refusal is checked, and the opening tried
+// again until one is open, for a few seconds.
 async function openHost() {
-    if (await hostIsOpen()) return
-    opening ??= chrome.offscreen
-        .createDocument({
-            url: HOST,
-            reasons: ['WORKERS', 'AUDIO_PLAYBACK', 'WEB_RTC'],
-            justification:
-                'Runs the small language model that writes ghost text in text fields (in a Web Worker, once for every tab), and plays the radio, whose songs come from other listeners over WebRTC, so it goes on when the popup closes.'
-        })
-        .catch((err) => {
-            // Opened meanwhile, by another page's request.
-            if (!/single offscreen/i.test(err.message)) throw err
-        })
-        .finally(() => (opening = null))
-    await opening
+    for (let tries = 0; tries < 20 && !(await hostIsOpen()); tries++) {
+        opening ??= chrome.offscreen
+            .createDocument({
+                url: HOST,
+                reasons: ['WORKERS', 'AUDIO_PLAYBACK', 'WEB_RTC'],
+                justification:
+                    'Runs the small language model that writes ghost text in text fields (in a Web Worker, once for every tab), and plays the radio, whose songs come from other listeners over WebRTC, so it goes on when the popup closes.'
+            })
+            .catch((err) => {
+                if (!/single offscreen/i.test(err.message)) throw err
+            })
+            .finally(() => (opening = null))
+        await opening
+        if (await hostIsOpen()) return
+        await new Promise((resolve) => setTimeout(resolve, 250))
+    }
 }
 
 // The host starts with the browser, and as the extension is installed or
@@ -56,6 +62,27 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
                 reply(false)
             }
         )
+        return true
+    }
+    // /reset: a fresh host, which forgets everything as it starts (an
+    // offscreen document cannot reload itself).
+    if (message?.type === 'restart') {
+        chrome.offscreen
+            .closeDocument()
+            .catch((err) =>
+                console.info('background: no host to close:', err.message)
+            )
+            .then(openHost)
+            .then(
+                () => reply(true),
+                (err) => {
+                    console.warn(
+                        'background: could not reopen the host:',
+                        err.message || err
+                    )
+                    reply(false)
+                }
+            )
         return true
     }
     if (message?.type === 'badge' && typeof message.text === 'string') {

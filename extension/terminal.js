@@ -222,17 +222,24 @@ function keep() {
     addEventListener('pagehide', () => pending && save())
 }
 
-// /reset forgets the kept screen too.
-const reset = find('/reset')
-const forget = reset.run
-reset.run = async (args) => {
+// /reset forgets everything, the background's too: the radio, the chat
+// and the model run there, and hold what is stored while they do. So the
+// extension's own storage is cleared here, a note is left in the storage
+// the background shares with this page (Chrome's offscreen document has no
+// chrome.storage), and the background restarts (in Chrome, background.js
+// closes it and opens it again; Firefox's reloads itself, and cannot
+// answer): it forgets the rest as it starts, before anything holds it
+// (host.js). Then this page reloads.
+find('/reset').run = async () => {
     keeping = false
-    await store
-        ?.remove(SCREEN)
+    await Promise.all([api.storage.local.clear(), store?.clear()])
+    localStorage.setItem('reset', '1')
+    await api.runtime
+        .sendMessage({ type: 'restart' })
         .catch((err) =>
-            console.warn('terminal: the kept screen stays:', err.message)
+            console.info('terminal: the background went:', err.message)
         )
-    return forget(args)
+    location.reload()
 }
 
 // ------------------------------------------------------------ /ghost

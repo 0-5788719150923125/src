@@ -23,13 +23,20 @@ function help() {
     say({ list: COMMANDS.map((command) => command.name).sort() })
 }
 
-// Forget everything this browser holds for the site, and start again:
-// storage, every IndexedDB database (v4 makes none, but v3 left some
-// behind), torrent pieces in the origin's private file system, model
-// weights in caches, and the HTTP cache (reset.txt is served with
-// Clear-Site-Data, src/_headers), so the reload fetches the site anew.
+// /reset: forget everything, and start again (the browser extension
+// restarts itself, and its background forgets as it starts: terminal.js).
 async function reset() {
     window.history.pushState('name', '', window.location.href.split('?')[0])
+    await forgetEverything()
+    window.location.reload()
+}
+
+// Everything this browser holds for the site: storage, every IndexedDB
+// database (v4 makes none, but v3 left some behind), torrent pieces in the
+// origin's private file system, model weights in caches, and the HTTP cache
+// (reset.txt is served with Clear-Site-Data, src/_headers), so a reload
+// fetches the site anew.
+export async function forgetEverything() {
     localStorage.clear()
     sessionStorage.clear()
     const steps = [
@@ -51,5 +58,4 @@ async function reset() {
     // rest go on.
     for (const step of steps)
         await step().catch((err) => console.warn('reset:', err.message || err))
-    window.location.reload()
 }

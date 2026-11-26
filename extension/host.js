@@ -39,6 +39,7 @@
 
 import * as answering from './js/answering.js'
 import * as chat from './js/chat.js'
+import { forgetEverything } from './js/commands.js'
 import { config } from './js/config.js'
 import { printElsewhere, say } from './js/print.js'
 import { createAsker } from './js/private.js'
@@ -356,7 +357,10 @@ function onScreen(port, { command, line, name, id, context } = {}) {
 // asks and answers, and the model comes up (it is let go after IDLE
 // without a guess); the welcome line and whatever is said wait for the
 // first terminal.
-texts.then(() => {
+texts.then(async () => {
+    // After /reset (terminal.js), everything is forgotten before anything
+    // starts: storage, songs, the model's weights.
+    if (localStorage.getItem('reset')) await forgetEverything()
     // The welcome line first, at the top of the terminal's history.
     say(t('ghost.info'))
     // Back in the chat it was in (chat.js reads it from the address).
@@ -404,4 +408,7 @@ api.runtime.onConnect.addListener((port) => {
 // itself).
 api.runtime.onMessage.addListener((message, sender, reply) => {
     if (message?.type === 'host') reply(true)
+    // /reset: Firefox's background page reloads itself (Chrome ignores
+    // this in an offscreen document, which background.js reopens instead).
+    if (message?.type === 'restart') location.reload()
 })

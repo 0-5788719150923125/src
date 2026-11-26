@@ -23,15 +23,18 @@ const ROOM_CHARS = 64000
 const NOISE = -1.5
 const FLOOR = 0.25
 
-let rooms = read() // name -> { lines, used }
+// name -> { lines, used }: read when first needed, not as the module loads
+// (the browser extension's background may forget everything first).
+let stored = null
+const kept = () => (stored ??= read())
 const indexes = new Map() // name -> index of that room's text, built when first needed
 let saving = null
 const watchers = new Set()
 
 function read() {
     try {
-        const kept = JSON.parse(localStorage.getItem(KEY))
-        return kept && typeof kept === 'object' ? kept : {}
+        const value = JSON.parse(localStorage.getItem(KEY))
+        return value && typeof value === 'object' ? value : {}
     } catch {
         return {}
     }
@@ -42,7 +45,7 @@ function save() {
     clearTimeout(saving)
     saving = setTimeout(() => {
         try {
-            localStorage.setItem(KEY, JSON.stringify(rooms))
+            localStorage.setItem(KEY, JSON.stringify(kept()))
         } catch (err) {
             console.warn('library: the chat was not kept:', err.message)
         }
@@ -51,12 +54,13 @@ function save() {
 
 export function remember(room, line) {
     if (part(evaluate(quality, line), 'noise') <= NOISE) return
-    const kept = (rooms[room] ??= { lines: [], used: 0 })
-    kept.lines.push(line)
-    kept.used = Date.now()
-    let chars = kept.lines.reduce((sum, l) => sum + l.length + 1, 0)
-    while (chars > ROOM_CHARS && kept.lines.length > 1)
-        chars -= kept.lines.shift().length + 1
+    const rooms = kept()
+    const chat = (rooms[room] ??= { lines: [], used: 0 })
+    chat.lines.push(line)
+    chat.used = Date.now()
+    let chars = chat.lines.reduce((sum, l) => sum + l.length + 1, 0)
+    while (chars > ROOM_CHARS && chat.lines.length > 1)
+        chars -= chat.lines.shift().length + 1
     for (const name of Object.keys(rooms)
         .sort((a, b) => rooms[b].used - rooms[a].used)
         .slice(ROOMS)) {
@@ -73,7 +77,7 @@ export function remember(room, line) {
 // through.
 export const snapshot = () =>
     Object.fromEntries(
-        Object.entries(rooms).map(([name, room]) => [name, room.lines])
+        Object.entries(kept()).map(([name, room]) => [name, room.lines])
     )
 
 // Called after each line kept.
@@ -84,7 +88,7 @@ export const watch = (watcher) => watchers.add(watcher)
 // its start like every other.
 function indexOf(name) {
     if (!indexes.has(name)) {
-        const { lines } = rooms[name]
+        const { lines } = kept()[name]
         const starts = []
         let at = 1
         for (const line of lines) {
@@ -114,7 +118,7 @@ function indexOf(name) {
 // the room the question came through: { L, w, spans }, or null.
 export function answer(context, current) {
     return combine(
-        Object.keys(rooms).map((name) => {
+        Object.keys(kept()).map((name) => {
             const room = indexOf(name)
             return {
                 ...lookup(room, context, room.weigh),
