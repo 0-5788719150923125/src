@@ -238,12 +238,13 @@ export async function ensureInfrastructure(project, domain) {
             // The record first: Pages validates the domain as it is attached.
             await ensureCname(domain, subdomain, token)
             await ensureDomainAttached(account, project, domain, token)
-            // Nudge Cloudflare to re-check the domain; harmless once active.
+            // Nudge Cloudflare to re-check the domain; once it is active,
+            // the nudge may be refused, which changes nothing.
             await cf(
                 'PATCH',
                 `/accounts/${account}/pages/projects/${project}/domains/${domain}`,
                 token
-            ).catch(() => {})
+            ).catch((err) => log(`domain re-check not needed: ${err.message}`))
             await ensureCacheRule(domain, token)
         }
         log(

@@ -261,10 +261,15 @@ async function fetchTorrent(frequency) {
             const response = await fetch(url, { cache: 'no-cache' })
             if (!response.ok) throw new Error(`${url}: ${response.status}`)
             const buf = new Uint8Array(await response.clone().arrayBuffer())
-            // Kept, for when no source answers. (The browser extension's
-            // pages cannot keep their own addresses in Cache Storage, and
-            // need not: the .torrent is in the extension.)
-            if (cache) await cache.put(key, response).catch(() => {})
+            // Kept, for when no source answers. (Cache Storage keeps only
+            // web addresses; the browser extension's pages need not keep
+            // theirs: the .torrent is in the extension.)
+            if (cache && /^https?:/.test(key))
+                await cache
+                    .put(key, response)
+                    .catch((err) =>
+                        console.warn('radio: not kept:', err.message)
+                    )
             return {
                 buf,
                 webSeed:

@@ -178,7 +178,6 @@ services:
       PEER_MB: ${PEER_MB:-2}
       PEER_PRIVATE: ${PEER_PRIVATE:-1}
       PEER_PRIVATE_GROUPS: ${PEER_PRIVATE_GROUPS:-4}
-      PEER_KEY: ${PEER_KEY:-}
       PEERS: ${LIBRARY_PEERS:-0}
       TRACKERS: ws://${BIND_ADDRESS:-127.0.0.1}:${TRACKER_PORT:-8002},${PUBLIC_TRACKERS:-wss://tracker.openwebtorrent.com,wss://open.ftorrent.com,wss://tracker.novage.com.ua,wss://tracker.webtorrent.dev}
       WEBRTC_PORTS: ${PEER_WEBRTC_PORTS:-52000-52999}

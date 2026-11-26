@@ -9,10 +9,11 @@
 // Each also answers privately (PEER_PRIVATE, on by default; private.js):
 // in a swarm of its own, from a table of its text made for private
 // retrieval, so the browser extension can ask about what is typed in other
-// sites' fields without the peer learning it. With PEER_KEY it proves a key
-// to askers, and the extension, built with that key in SRC_PINNED_KEYS,
-// counts such peers above the rest; browsers answer too, so none is needed
-// (next/private-memory.md).
+// sites' fields without the peer learning it. It proves a key to askers,
+// made on its first start and kept in DATA_DIR (peer-key), as a browser
+// keeps its own; its public half is logged, and the extension, built with
+// it in SRC_PINNED_KEYS, counts such peers above the rest. Browsers answer
+// too, so no server is needed (next/private-memory.md).
 //
 // Two uses: the stack's `library` service (compose profile `public`), whose
 // text is the prose and code of git repositories (PEER_DATA=git,
@@ -37,9 +38,6 @@
 //   PEER_PRIVATE_GROUPS  the private table's size, in groups of 16,384
 //                 records of 256 bytes (4 for git, 16 MiB, about 900,000 characters
 //                 held well; 1 for test data; an asker downloads 1.3 MB a group, once)
-//   PEER_KEY      a secret: the key this peer proves to private askers
-//                 (its public key is logged at start, for SRC_PINNED_KEYS);
-//                 with several peers, each adds its number
 //   TRACKERS      comma-separated trackers to announce to
 //   WEBRTC_PORTS  a UDP range, or one port, on a public server (webrtc.js)
 //   DATA_DIR      where downloads and clones are kept (./data)
@@ -48,7 +46,7 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
 import WebTorrent from 'webtorrent'
-import { keysFor } from '../../src/js/crypto.js'
+import { keysFor, randomHex } from '../../src/js/crypto.js'
 import {
     combine,
     index,
@@ -90,7 +88,16 @@ const PRIVATE_GROUPS = Math.max(
     1,
     Number(process.env.PEER_PRIVATE_GROUPS) || (DATA === 'git' ? 4 : 1)
 )
-const KEY = process.env.PEER_KEY || ''
+// This server's secret, made on its first start and kept with its data, so
+// its key (and the extension's pin on it) survives restarts and rebuilds.
+function secretOf(file = path.join(DATA_DIR, 'peer-key')) {
+    if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim()
+    const secret = randomHex(64)
+    fs.mkdirSync(DATA_DIR, { recursive: true })
+    fs.writeFileSync(file, `${secret}\n`, { mode: 0o600 })
+    return secret
+}
+const KEY = PRIVATE ? secretOf() : ''
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 
 // Only what the chat accepts (room.js isPlain): accents folded, curly quotes
@@ -267,16 +274,14 @@ function startPeer(n, texts, rtcConfig) {
         matched: 0,
         answerer: null
     }
-    const secret = KEY && (PEER_COUNT > 1 ? `${KEY}:${n}` : KEY)
-    if (PRIVATE)
-        peer.answerer = createAnswerer({
-            groups: PRIVATE_GROUPS,
-            secret: secret || null
-        })
-    if (secret)
+    if (PRIVATE) {
+        // With several peers, each its own key.
+        const secret = PEER_COUNT > 1 ? `${KEY}:${n}` : KEY
+        peer.answerer = createAnswerer({ groups: PRIVATE_GROUPS, secret })
         keysFor(secret).then(({ pub }) =>
             log(`peer ${n}: private key ${pub} (for SRC_PINNED_KEYS)`)
         )
+    }
     remember(peer, texts)
     const client = new WebTorrent({
         dht: false,

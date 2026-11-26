@@ -87,7 +87,8 @@ so page text is never added to any memory: it only asks.
 - **The library peers** (`containers/node/peers.js`) answer privately too
   (`PEER_PRIVATE`, on): a table of their text (`PEER_PRIVATE_GROUPS`, 4 for
   the git library: about 900,000 characters held well), and a key
-  (`PEER_KEY`, its public key logged at start). Compose passes all three.
+  (made on its first start and kept in its data volume, as a browser keeps
+  its own; the public key logged).
 - **Browsers answer** (`answering.js`, `answer.worker.js`; the user's call,
   2026-11-26: "we shouldn't be forcing everything through a physical
   server"): every tab of the site, and the extension's background, answer
@@ -171,9 +172,9 @@ vote.
 
 ## Not built yet
 
-- **Deploying the servers' part** (optional now): the user sets `PEER_KEY`
-  on each server, rebuilds the library image, lists the logged keys in
-  `SRC_PINNED_KEYS`, and rebuilds the extension. Tabs answer meanwhile.
+- **Deploying the servers' part** (optional now): the user rebuilds the
+  library image, lists the keys the servers log in `SRC_PINNED_KEYS`, and
+  rebuilds the extension. Tabs answer meanwhile.
 - **Hints kept across restarts**: each browser session downloads each
   library's hint again (1.3-5 MB).
 - **A tab answering on a phone**, with the model running: unmeasured.

@@ -28,22 +28,22 @@
 //   host asks does not depend on what came back.
 // - 'terminal', the extension's terminal (terminal.js): it speaks the
 //   worker's own messages (src/js/writer.js), passed on with guess ids
-//   swapped; the chat's lines it sends become the conversation the worker
-//   reads for its guesses.
+//   swapped; the worker reads the chat's conversation, which runs here.
+// - 'screen', the terminal again: the radio and the chat run here too (the
+//   site's radio.js and chat.js), so they go on when the popup closes; what
+//   they print comes to the terminal, and its /radio, /chat, chat lines and
+//   memory questions come here (see the screen, below).
 // One guess runs at a time: a new one, from anywhere, stops the last (the
 // field being typed in is the one that matters). Nothing typed in a page is
 // kept, or sent anywhere readable.
-//
-// The radio plays here too (the site's radio.js), so it goes on when the
-// popup closes; terminals reach it on a third kind of port, 'radio' (see
-// the radio, below).
 
 import * as answering from './js/answering.js'
+import * as chat from './js/chat.js'
 import { config } from './js/config.js'
-import * as library from './js/library.js'
 import { printElsewhere } from './js/print.js'
 import { createAsker } from './js/private.js'
 import { radio, restore } from './js/radio.js'
+import * as recall from './js/recall.js'
 import { state } from './js/state.js'
 import { load as loadText, t } from './js/text.js'
 
@@ -61,7 +61,7 @@ let worker = null
 let ready = false
 let status = null // the worker's last word on itself, for the terminal's ticker
 let current = null // { id, port, theirs, terminal }: the guess being written, by worker id and its asker's own
-let conversation = [] // the chat's last lines, from the terminal: a restarted worker gets them back
+let conversation = [] // the chat's last lines: a restarted worker gets them back
 const LINES = 64
 let next = 0
 let idle = null
@@ -161,12 +161,13 @@ function rest() {
 function badge(text) {
     // Firefox's background page has the button (Manifest V2's browserAction).
     const button = api.action ?? api.browserAction
+    const failed = (err) => console.warn('host: no badge:', err.message)
     if (button?.setBadgeText) {
         button.setBadgeBackgroundColor?.({ color: '#000000' })
-        return Promise.resolve(button.setBadgeText({ text })).catch(() => {})
+        return Promise.resolve(button.setBadgeText({ text })).catch(failed)
     }
     // An offscreen document has no api.action; the service worker does.
-    api.runtime.sendMessage({ type: 'badge', text }).catch(() => {})
+    api.runtime.sendMessage({ type: 'badge', text }).catch(failed)
 }
 
 function stopFor(port) {
@@ -190,12 +191,6 @@ function joinMemory() {
     answerer = answering.answerer()
     answering.join({ asker, answerer })
 }
-
-// The terminal keeps chat lines in this origin's storage; this page hears
-// of them as they are written.
-addEventListener('storage', (event) => {
-    if (event.key === 'library') library.reload()
-})
 
 function pageGuess(port, { id, line, title, site }) {
     if (typeof line !== 'string' || !line.trim()) return
@@ -242,25 +237,9 @@ function onPage(port, message) {
 
 function onTerminal(port, message) {
     const command = message?.command
-    if (command === 'load') {
-        // A terminal that opens starts its conversation afresh.
-        conversation = (message.lines ?? [])
-            .filter((line) => typeof line === 'string')
-            .slice(-LINES)
-        // A worker started now reads it as it loads; a running one is told.
-        if (worker) {
-            worker.postMessage({ command: 'forget' })
-            for (const line of conversation)
-                worker.postMessage({ command: 'remember', line })
-        }
-        rest()
-    } else if (command === 'remember' && typeof message.line === 'string') {
-        conversation = [...conversation, message.line].slice(-LINES)
-        worker?.postMessage(message)
-    } else if (command === 'forget') {
-        conversation = []
-        worker?.postMessage(message)
-    } else if (command === 'guess') {
+    // The conversation is the chat's, kept here: a terminal's own is not.
+    if (command === 'load') rest()
+    else if (command === 'guess') {
         rest()
         // Asked while the model (re)starts: sent once it is ready.
         current = {
@@ -279,42 +258,73 @@ function onTerminal(port, message) {
     }
 }
 
-// ------------------------------------------------------------ the radio
+// ------------------------------------------------------------ the screen
 
-// A terminal's /radio comes here ({ command: 'radio' }), and what the radio
-// says goes to every open terminal ({ print: { speaker, body, options } }),
-// with its part of the ticker ({ state: { radio, seeding } }). What it
-// says while no terminal is open (the next song) waits for the next one.
-// The stations are joined, and their songs shared, as on the site, once a
-// terminal first opens, and from then on while the background runs.
-const radios = new Set()
-const MISSED = 20
+// The radio and the chat run here, so they go on when the popup closes;
+// terminals reach them on 'screen' ports. A terminal sends { command:
+// 'radio' }, { command: 'send', line } (a chat line), { command: 'chat',
+// name } (/chat), and { command: 'ask', id, context } (the chat's memory,
+// for its ghost); it hears { print: { speaker, body, options } } and
+// { clear } as the radio and the chat print, { memory: { id, memory, done } },
+// and the ticker's part kept here ({ state }). What is printed while no
+// terminal is open (the next song, the chat) waits for the next one. Both
+// start when a terminal first opens, and then stay: the stations shared
+// and the chat joined, as an open tab of the site does.
+const screens = new Set()
+const MISSED = 200
+const CHAT = 'chat' // localStorage: the chat this background was in
 let missed = []
-let tuned = false
+let started = false
 let shown = null
+let kept = null // the chat as last saved
 
-printElsewhere((speaker, body, options) => {
-    const line = { speaker, body, options }
-    if (!radios.size) missed = [...missed, line].slice(-MISSED)
-    for (const port of radios) port.postMessage({ print: line })
+const toScreens = (message) => {
+    if (!screens.size) missed = [...missed, message].slice(-MISSED)
+    for (const port of screens) port.postMessage(message)
+}
+
+printElsewhere({
+    print: (speaker, body, options) =>
+        toScreens({ print: { speaker, body, options } }),
+    clear: () => {
+        if (!screens.size) missed = []
+        toScreens({ clear: true })
+    }
 })
 
-// With the private memory's peers: how many, how many it can ask.
+// The conversation the model reads for the terminal's guesses is the
+// chat's.
+chat.useConversation({
+    remember(line) {
+        conversation = [...conversation, line].slice(-LINES)
+        worker?.postMessage({ command: 'remember', line })
+    },
+    forget() {
+        conversation = []
+        worker?.postMessage({ command: 'forget' })
+    }
+})
+
+// The ticker's part kept here, and the private memory's peers.
 const ticker = () => {
-    const { radio = null, seeding = null } = state.snapshot()
-    const memory = asker?.status()
+    const { radio = null, seeding = null, daemon = null } = state.snapshot()
+    const { chat: room = null, memory = null } = state.snapshot()
+    const asking = asker?.status()
     const served = answerer?.status()
     return {
+        chat: room,
+        daemon,
+        memory,
         radio,
         seeding,
-        private: memory
+        private: asking
             ? {
-                  peers: memory.peers,
-                  ready: memory.ready,
-                  pinned: memory.trusted,
-                  asked: memory.asked,
-                  answered: memory.answered,
-                  dropped: memory.dropped,
+                  peers: asking.peers,
+                  ready: asking.ready,
+                  pinned: asking.trusted,
+                  asked: asking.asked,
+                  answered: asking.answered,
+                  dropped: asking.dropped,
                   ...(served ? { serving: served.chars } : {})
               }
             : null
@@ -323,20 +333,38 @@ const ticker = () => {
 
 function showTicker() {
     const now = JSON.stringify(ticker())
+    const room = state.get('chat')
+    if (room && room !== kept) localStorage.setItem(CHAT, (kept = room))
     if (now === shown) return
     shown = now
-    for (const port of radios) port.postMessage({ state: ticker() })
+    for (const port of screens) port.postMessage({ state: ticker() })
 }
 
-function onRadioOpen(port) {
-    if (!tuned) {
-        tuned = true
+function onScreenOpen(port) {
+    if (!started) {
+        started = true
         restore()
+        // Back in the chat it was in (chat.js reads it from the address).
+        kept = localStorage.getItem(CHAT)
+        if (kept)
+            history.replaceState(null, '', `?chat=${encodeURIComponent(kept)}`)
+        chat.connect()
         setInterval(showTicker, 1000)
     }
-    for (const line of missed) port.postMessage({ print: line })
+    for (const message of missed) port.postMessage(message)
     missed = []
     port.postMessage({ state: ticker() })
+}
+
+function onScreen(port, { command, line, name, id, context } = {}) {
+    if (command === 'radio') radio()
+    else if (command === 'send' && typeof line === 'string') chat.send(line)
+    else if (command === 'chat')
+        chat.setChat([typeof name === 'string' ? name : ''])
+    else if (command === 'ask' && typeof context === 'string')
+        recall.ask(context, (memory, done) =>
+            port.postMessage({ memory: { id, memory, done } })
+        )
 }
 
 // ------------------------------------------------------------ ports
@@ -344,10 +372,7 @@ function onRadioOpen(port) {
 const KINDS = {
     pen: { ports: pages, handle: onPage },
     terminal: { ports: terminals, handle: onTerminal },
-    radio: {
-        ports: radios,
-        handle: (port, message) => message?.command === 'radio' && radio()
-    }
+    screen: { ports: screens, handle: onScreen }
 }
 
 api.runtime.onConnect.addListener((port) => {
@@ -356,7 +381,7 @@ api.runtime.onConnect.addListener((port) => {
     texts.then(() => {
         kind.ports.add(port)
         joinMemory()
-        if (kind.ports === radios) return onRadioOpen(port)
+        if (kind.ports === screens) return onScreenOpen(port)
         rest()
         if (ready) port.postMessage({ ready: true })
         if (kind.ports === terminals && status) port.postMessage({ status })

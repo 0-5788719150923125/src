@@ -125,10 +125,6 @@ output pre {
   margin-left: 30px;
 }
 
-.content {
-  position: relative;
-}
-
 .handle {
   margin-right: 1ch;
 }
@@ -138,21 +134,6 @@ output pre {
   word-break: break-word;
   -webkit-hyphens: auto;
   hyphens: auto;
-}
-
-.content .tooltip {
-  visibility: hidden;
-  position: absolute;
-  z-index: 100;
-  display: inline-block;
-  max-width: 100%;
-  white-space: nowrap;
-  color: black;
-  background-color: white;
-}
-
-.content:hover .tooltip {
-  visibility: visible;
 }
 
 /* /help */

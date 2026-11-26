@@ -245,6 +245,8 @@ import { ahead } from '../src/js/predict.js'
         const ghost = message?.ghost
         if (!ghost || current?.id !== ghost.id) return
         clearTimeout(watchdog)
+        // Corrected by the swarm: written again from the start.
+        if (ghost.reset) Object.assign(current, { written: '', done: false })
         if (ghost.text) current.written += ghost.text
         if (ghost.done) current.done = true
         // Taken whole before it finished: guess on from the end. (A guess

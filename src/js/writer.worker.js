@@ -69,6 +69,11 @@ const TEMPERATURE = 0.7
 const TOP_P = 0.9
 // Tokens between questions to the room's memory while a guess is written.
 const ASK_EVERY = 4
+// A guess never waits for the swarm, but the swarm can correct it: an
+// answer to its first question that comes after it has started, counts for
+// at least this much (memory.js weight: a match of 24 characters), and
+// disagrees with what it has written rewrites it once, from the start.
+const REWRITE = 0.4
 
 let model = null
 let tokenizer = null
@@ -318,7 +323,15 @@ function firstToken(rest) {
 // `preface`, when given, is read before the line instead of the room's
 // conversation: the browser extension's guesses in other sites' text
 // fields (extension/host.js), which have nothing to do with the chat.
-async function guess(id, line, stopped, memory, done, preface = null) {
+async function guess(
+    id,
+    line,
+    stopped,
+    memory,
+    done,
+    preface = null,
+    rewritten = false
+) {
     const { stable, tail } = split(line)
     const typed = encode(stable)
     let scores = await read(
@@ -359,6 +372,7 @@ async function guess(id, line, stopped, memory, done, preface = null) {
     let lastAsked = 0
     let every = ASK_EVERY // doubles each time the room has nothing to say
     let taken = null
+    let rewrite = null // the answer that is to rewrite this guess
     // Take what the room has said, since the last token, about the latest
     // question (some of it may have come while the guess waited its turn).
     const listen = () => {
@@ -371,6 +385,17 @@ async function guess(id, line, stopped, memory, done, preface = null) {
             return
         taken = heard
         adopt(heard.memory)
+        const agrees = spans.some(
+            ([span]) => span.startsWith(written) || written.startsWith(span)
+        )
+        if (
+            !rewritten &&
+            !question.seq &&
+            written &&
+            lambda >= REWRITE &&
+            !agrees
+        )
+            rewrite = heard
         if (heard.done) {
             question.open = false
             if (question.seq && !heard.memory) every *= 2
@@ -382,6 +407,7 @@ async function guess(id, line, stopped, memory, done, preface = null) {
         await yieldToMessages()
         if (stopped()) return
         listen()
+        if (rewrite) break
         const boost = spans.length
             ? boostFrom(spans, written, firstToken)
             : null
@@ -423,7 +449,32 @@ async function guess(id, line, stopped, memory, done, preface = null) {
         scores = await step([token])
         if (n === LENGTH - 1) why = 'length'
     }
-    if (!stopped()) postMessage({ ghost: { id, done: true, why } })
+    // Written before its first question closed: the answers still to come
+    // may correct it.
+    while (
+        !rewrite &&
+        !rewritten &&
+        !question.seq &&
+        question.open &&
+        !stopped()
+    ) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        listen()
+    }
+    if (stopped()) return
+    if (rewrite) {
+        postMessage({ ghost: { id, reset: true } })
+        return guess(
+            id,
+            line,
+            stopped,
+            rewrite.memory,
+            rewrite.done,
+            preface,
+            true
+        )
+    }
+    postMessage({ ghost: { id, done: true, why } })
 }
 
 onmessage = ({ data }) => {

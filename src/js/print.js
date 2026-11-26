@@ -34,9 +34,10 @@ const MAX_LINES = 1000
 const output = document.querySelector('#container output')
 const page = () => document.documentElement.scrollHeight
 
-// Where lines go on a page with no screen: the browser extension's
-// background page, where its radio plays, passes them on to the
-// extension's terminals (extension/host.js). Null on the site.
+// Where the screen is on a page with none: the browser extension's
+// background page, where its radio and chat run, passes lines and clears
+// on to the extension's terminals ({ print, clear }, extension/host.js).
+// Null on the site.
 let elsewhere = null
 export const printElsewhere = (to) => (elsewhere = to)
 
@@ -59,8 +60,7 @@ const el = (tag, className, ...children) => {
 // Appends a line and returns it, so a caller can take it away again.
 //
 //   body       a string is plain text; { html } is markup; { list } is the
-//              column list of /help; { text, tooltip } is text with a note
-//              that shows on hover
+//              column list of /help
 //   speaker    null prints the body alone, with no handle
 //   block      starts the body on a line of its own
 //   scroll     'always' (the default), 'follow' (only a reader already at
@@ -70,12 +70,12 @@ export function print(
     body,
     { block = false, scroll = 'always' } = {}
 ) {
-    if (elsewhere) return elsewhere(speaker, body, { block, scroll })
+    if (elsewhere) return elsewhere.print(speaker, body, { block, scroll })
     const text = el('span', 'text')
     if (block) text.style.display = 'block'
     if (typeof body === 'string') text.textContent = body
     else if (body.html !== undefined) text.innerHTML = body.html
-    else if (body.list)
+    else
         text.append(
             el(
                 'div',
@@ -85,7 +85,6 @@ export function print(
                 )
             )
         )
-    else text.append(el('span', 'tooltip', body.tooltip), body.text)
 
     const line = el('div', 'content')
     if (speaker)
@@ -103,7 +102,8 @@ export function print(
 // The terminal speaking: most lines are this.
 export const say = (body, options) => print(SPEAKERS.fold, body, options)
 
-export const clear = () => output.replaceChildren()
+export const clear = () =>
+    elsewhere ? elsewhere.clear() : output.replaceChildren()
 
 // Links open in a new tab, so the terminal is never navigated away from.
 export const link = (href, label) => ({
@@ -117,6 +117,7 @@ export const banner = (art, title) => ({
 
 // The handle before the command line: who you are.
 export function showPrompt(speaker) {
+    if (elsewhere) return
     const prompt = document.getElementById('prompt')
     prompt.className = speaker.color
     prompt.textContent = handle(speaker)

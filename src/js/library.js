@@ -79,14 +79,6 @@ export const snapshot = () =>
 // Called after each line kept.
 export const watch = (watcher) => watchers.add(watcher)
 
-// Read again from storage: another page of the same origin may have kept
-// lines since (the extension's background, reading what its terminal kept).
-export function reload() {
-    rooms = read()
-    indexes.clear()
-    for (const watcher of watchers) watcher()
-}
-
 // A room's index, with where each line starts and what it counts for. The
 // text starts with a line break too, so the first line can be matched from
 // its start like every other.

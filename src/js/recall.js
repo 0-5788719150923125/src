@@ -89,7 +89,14 @@ function answerQuestion(message, wire) {
 // and a last time with done = true once every peer has answered or WAIT
 // has passed. memory is null when nothing matched. Never throws: a peer
 // that is slow, gone, or broken only means less memory.
+//
+// The browser extension's terminal asks its background page instead, which
+// is in the chat (askElsewhere, extension/terminal.js). Null on the site.
+let elsewhere = null
+export const askElsewhere = (to) => (elsewhere = to)
+
 export function ask(context, update) {
+    if (elsewhere) return elsewhere(context, update)
     const tell = (memory, done) => safely(() => update(memory, done))
     const answers = [own(context)]
     const merged = () =>

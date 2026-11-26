@@ -1,10 +1,10 @@
 // The extension's terminal is the site's (popup.html and panel.html are
 // its index.html, with this module in place of js/main.js), plus what only
 // an extension can do or needs:
-// - its model is the one the extension shares, and so is its radio (both
-//   in host.js), so the radio plays on when the popup closes;
-// - the popup is a new page each time it opens, so what was on the screen,
-//   and the chat it was in, are kept while the browser runs, and come back;
+// - its model is the one the extension shares, and so are its radio and
+//   chat (all in host.js), so they go on when the popup closes;
+// - the popup is a new page each time it opens, so what was on the screen
+//   is kept while the browser runs, and comes back;
 // - /ghost turns the ghost text in other sites' fields (page.js) on or
 //   off, everywhere or on one site, kept in chrome.storage where every
 //   tab's page.js reads it.
@@ -14,9 +14,11 @@
 //   /ghost on | off SITE   one site (a host name, or "here": the tab the
 //                          terminal was opened over)
 
+import * as chat from './js/chat.js'
 import { COMMANDS, find } from './js/commands.js'
-import { print, say } from './js/print.js'
+import { clear, print, say } from './js/print.js'
 import * as radio from './js/radio.js'
+import * as recall from './js/recall.js'
 import { state } from './js/state.js'
 import { start } from './js/terminal.js'
 import { html, t } from './js/text.js'
@@ -80,55 +82,88 @@ function sharedWorker() {
 }
 writer.useWorker(sharedWorker)
 
-// ------------------------------------------------------------ the radio
+// ------------------------------------------------------------ the background
 
-// The radio plays in the background (host.js), which outlives the popup:
-// /radio is passed there, and what the radio says, with its part of the
-// ticker, comes back, including what it said while the popup was closed.
-// Should the host not answer, the terminal plays the radio itself, as the
+// The radio and the chat run in the background (host.js), which outlives
+// the popup: /radio, /chat and chat lines go there, and the ghost asks it
+// for the chat's memory; what the radio and the chat print comes back, with
+// their part of the ticker, including what was printed while the popup was
+// closed. Should the host not answer, the terminal runs them itself, as the
 // site does, until it closes.
-function radioElsewhere() {
+function background() {
     let port = null
-    let typed = 0 // /radio typed before the host answered
-    async function open() {
-        try {
-            port = await connectHost('radio')
-        } catch (err) {
-            console.warn(
-                'terminal: playing the radio itself:',
-                err.message || err
-            )
-            radio.playElsewhere(null)
-            radio.restore()
-            for (; typed; typed--) radio.radio()
-            return
+    let opening = null
+    let queue = [] // for the background, before it answered
+    let next = 0
+    const asking = new Map() // question id -> update
+    const post = (message) =>
+        port ? port.postMessage(message) : queue.push(message)
+    const here = ({ command, line, name, id, context }) => {
+        if (command === 'radio') radio.radio()
+        else if (command === 'send') chat.send(line)
+        else if (command === 'chat') chat.setChat([name])
+        else if (command === 'ask') recall.ask(context, asking.get(id))
+    }
+    function heard({ print: line, clear: cleared, memory, state: ticker }) {
+        if (line) print(line.speaker, line.body, line.options)
+        if (cleared) clear()
+        if (memory) {
+            if (memory.done) asking.delete(memory.id)
+            asking.get(memory.id)?.(memory.memory, memory.done)
         }
-        port.onMessage.addListener((message) => {
-            if (message.print)
-                print(
-                    message.print.speaker,
-                    message.print.body,
-                    message.print.options
+        for (const [key, value] of Object.entries(ticker ?? {})) {
+            if (value) state.set(key, value)
+            else state.delete(key)
+        }
+    }
+    // Called by the site's terminal as it starts (radio.restore, then
+    // chat.connect): one port for both.
+    const open = () =>
+        (opening ??= connectHost('screen').then(
+            (opened) => {
+                port = opened
+                port.onMessage.addListener(heard)
+                port.onDisconnect.addListener(() => {
+                    port = null
+                    for (const key of [
+                        'chat',
+                        'daemon',
+                        'memory',
+                        'radio',
+                        'seeding'
+                    ])
+                        state.delete(key)
+                })
+                for (const message of queue.splice(0)) port.postMessage(message)
+            },
+            (err) => {
+                console.warn(
+                    'terminal: running the radio and chat itself:',
+                    err.message || err
                 )
-            for (const [key, value] of Object.entries(message.state ?? {})) {
-                if (value) state.set(key, value)
-                else state.delete(key)
+                radio.playElsewhere(null)
+                chat.chatElsewhere(null)
+                recall.askElsewhere(null)
+                radio.restore()
+                chat.connect()
+                for (const message of queue.splice(0)) here(message)
             }
-        })
-        port.onDisconnect.addListener(() => {
-            port = null
-            state.delete('radio')
-            state.delete('seeding')
-        })
-        for (; typed; typed--) port.postMessage({ command: 'radio' })
-    }
-    return {
-        radio: () => (port ? port.postMessage({ command: 'radio' }) : typed++),
-        // The site's terminal calls this as it starts, under the banner.
+        ))
+    radio.playElsewhere({
+        radio: () => post({ command: 'radio' }),
         restore: open
-    }
+    })
+    chat.chatElsewhere({
+        connect: open,
+        send: (line) => post({ command: 'send', line }),
+        setChat: (name) => post({ command: 'chat', name })
+    })
+    recall.askElsewhere((context, update) => {
+        asking.set(++next, update)
+        post({ command: 'ask', id: next, context })
+    })
 }
-radio.playElsewhere(radioElsewhere())
+background()
 
 // ------------------------------------------------------------ the screen
 
@@ -142,7 +177,9 @@ const output = document.querySelector('#container output')
 const isBanner = (line) => Boolean(line.querySelector('#atom'))
 let keeping = true
 
-async function recall() {
+// The kept screen, or null when there is none (or session storage is
+// refused).
+async function keptScreen() {
     try {
         const { [SCREEN]: kept } = await store.get(SCREEN)
         return kept && Array.isArray(kept.lines) ? kept : null
@@ -171,7 +208,6 @@ function keep() {
     const isOwn = (line) =>
         isBanner(line) ||
         line.querySelector(':scope > .text')?.textContent === welcome
-    let chat = state.get('chat')
     let pending = null
     const save = () => {
         clearTimeout(pending)
@@ -181,17 +217,13 @@ function keep() {
             .filter((line) => !isOwn(line))
             .map((line) => line.outerHTML)
         store
-            .set({ [SCREEN]: { lines, chat: state.get('chat') ?? null } })
-            .catch(() => {})
+            .set({ [SCREEN]: { lines } })
+            .catch((err) =>
+                console.warn('terminal: the screen was not kept:', err.message)
+            )
     }
     const soon = () => (pending ??= setTimeout(save, 100))
     new MutationObserver(soon).observe(output, { childList: true })
-    // /chat changes the chat a moment after it clears the screen.
-    setInterval(() => {
-        if (state.get('chat') === chat) return
-        chat = state.get('chat')
-        soon()
-    }, 500)
     addEventListener('pagehide', () => pending && save())
 }
 
@@ -200,7 +232,11 @@ const reset = find('/reset')
 const forget = reset.run
 reset.run = async (args) => {
     keeping = false
-    await store?.remove(SCREEN).catch(() => {})
+    await store
+        ?.remove(SCREEN)
+        .catch((err) =>
+            console.warn('terminal: the kept screen stays:', err.message)
+        )
     return forget(args)
 }
 
@@ -281,15 +317,9 @@ async function ghost([word, where]) {
 
 // ------------------------------------------------------------ start
 
-// Back in the chat it was in (the site reads it from the address), then
-// the site's terminal, with the extension's welcome line, then the kept
+// The site's terminal, with the extension's welcome line, then the kept
 // lines under its banner.
-const kept = store ? await recall() : null
-if (kept?.chat && !new URLSearchParams(location.search).has('chat')) {
-    const url = new URL(location.href)
-    url.searchParams.set('chat', kept.chat)
-    history.replaceState(null, '', url)
-}
+const kept = store ? await keptScreen() : null
 await start({ welcome: 'ghost.info' })
 show(kept)
 keep()

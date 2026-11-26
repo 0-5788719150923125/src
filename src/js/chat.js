@@ -4,9 +4,14 @@
 // rooms it has been in (library.js), and lends them to
 // the swarm memory, so a room's past can surface as suggestions. Every
 // message is signed by its sender's key (identity.js); unsigned ones are
-// dropped, and the key shows on hover. The writer (writer.js) reads the
-// room's conversation to guess what you will type, and forgets it when you
-// change rooms.
+// dropped. The writer (writer.js) reads the room's conversation to guess
+// what you will type, and forgets it when you change rooms.
+//
+// The browser extension runs the chat in its background page, which
+// outlives its popup (extension/host.js): there, the conversation goes to
+// the background's own model (useConversation), and the extension's
+// terminal hands connecting, sending and /chat to the background
+// (chatElsewhere, extension/terminal.js). Both are unset on the site.
 
 import * as writer from './writer.js'
 import * as library from './library.js'
@@ -46,11 +51,17 @@ const session = {
     gossip: createGossip()
 }
 
+let elsewhere = null // { connect, send, setChat }
+export const chatElsewhere = (to) => (elsewhere = to)
+let conversation = writer // { remember, forget }
+export const useConversation = (to) => (conversation = to)
+
 // At start: sign in, and join the chat named in the address, or the default.
 // Visitors call a room a chat (/chat, ?chat=, the ticker's `chat`; the
 // user's call, 2026-11-22, after WoW's "trade chat"); the code still says
 // room, and so does the field in each message, so older pages still talk.
 export async function connect() {
+    if (elsewhere) return elsewhere.connect()
     // Every message is signed; a browser that cannot sign stays out.
     if (!(await signIn())) return
     showPrompt(you())
@@ -68,6 +79,7 @@ export async function connect() {
 
 // /chat <name>: a fresh screen, your sigil, and the new chat.
 export async function setChat([name]) {
+    if (elsewhere) return elsewhere.setChat(name)
     if (!name) return say(html('chat.usage'))
     clear()
     const keys = signedIn()
@@ -83,7 +95,7 @@ async function enter(chat) {
     const url = new URL(window.location.href)
     url.searchParams.set('chat', name)
     window.history.pushState({}, '', url)
-    writer.forget()
+    conversation.forget()
     const previous = session.room
     session.room = null
     await destroy(previous)
@@ -165,12 +177,7 @@ async function receive(payload, fromWire) {
         relay(payload, fromWire, session.room.wires)
         notify(`${handle(SPEAKERS.fold)} ${message}`)
         keep(message)
-        // The sender's key, on hover: who said it, should they need blocking.
-        print(
-            SPEAKERS.fold,
-            { text: message, tooltip: t('chat.sender', { key: sender }) },
-            { scroll: 'follow' }
-        )
+        print(SPEAKERS.fold, message, { scroll: 'follow' })
     } catch (err) {
         console.warn(
             'Dropped a message that could not be read:',
@@ -182,11 +189,12 @@ async function receive(payload, fromWire) {
 // The writer reads every line of the room; the library keeps them, and
 // shares them with the swarm.
 function keep(message) {
-    writer.remember(message)
+    conversation.remember(message)
     library.remember(session.name, message)
 }
 
 export async function send(message) {
+    if (elsewhere) return elsewhere.send(message)
     const keys = signedIn()
     if (!keys) return
     keep(message)
