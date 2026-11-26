@@ -17,6 +17,7 @@ Type `/help` in the terminal.
 - `/about` - what this is, with links to the code and to the original site's archive.
 - `/radio` - on, or off. A station seeded as a torrent, with a mirror behind it, on one schedule for everyone: whoever tunes in hears the same song at the same moment. Songs you hear stay in your browser and are shared with other listeners.
 - `/chat <name>` - join another chat.
+- `/model <name>` - which language model writes ahead of you: SmolLM2-135M-Instruct (the default, 137 MB) or SmolLM2-360M-Instruct (365 MB, slower, better). As you type the command, the ghost suggests a name, and Tab keeps it.
 
 The page puts you in a chat as soon as it opens (the one in the address, `?chat=name`, or `trade`). Chats live between browsers, found through WebTorrent trackers, and every message is signed with a key your browser makes and keeps for you.
 
@@ -31,7 +32,7 @@ When you start typing, a small language model running in your tab writes ahead o
 - **[`src/`](src/)** - The site. No bundler: the build copies it and fills in the configuration.
   - **[`src/js/`](src/js/)** - The modules, loaded by the browser as they are.
   - **[`src/text/`](src/text/)** - Every string a visitor reads, as Markdown, by language.
-- **[`extension/`](extension/)** - The browser extension's own parts: the ghost text in other sites' fields, the model they share, and `/ghost`.
+- **[`extension/`](extension/)** - The browser extension's own parts: the ghost text in other sites' fields, and the model they share.
 - **[`scripts/`](scripts/)** - Build, dev server, deploy, vendoring, the extension's build and its upload to the stores, in Node.
 - **[`stations.js`](stations.js)** - The radio stations.
 - **[`containers/`](containers/)** - The stack's image: tracker, seeder and web seed.
@@ -119,7 +120,6 @@ Two browsers behind strict NATs, such as a phone on a cellular network, cannot c
 - **The radio plays in the background,** so closing the popup does not stop it; `/radio` again does. Once the terminal has been opened, the extension also shares the songs it holds with other listeners until the browser closes, as an open tab of the site does.
 - **Ghost text everywhere:** in other sites' text fields (inputs, textareas, and the editors chat boxes and mail are made of), the same model guesses how your line goes on, drawn after the caret, faded, with the same wave. Tab keeps a word, held it keeps them all, Escape hides it, and Tab and Escape are left to the page whenever no guess is showing. Never in password, payment, address or other personal-detail fields, never in code editors, and only with the caret at the end of the text. A page can opt a field out with `data-src-ghost="off"`. What is typed goes to the extension's model, in the browser, and to the swarm's memory only as an encrypted question that the answering peers cannot read (private information retrieval; see [next/private-memory.md](next/private-memory.md)). The chat itself is never asked.
 - **One model for the whole browser:** it loads the first time you type in a page or open the terminal, once for every tab and the terminal too (in Chrome, in an offscreen document; in Firefox, in the background page), so the terminal's ghost is ready as the popup opens. It is let go after 30 minutes without a guess. The toolbar button shows its first download.
-- **`/ghost`** in the extension's terminal: `/ghost off` or `/ghost on` everywhere, `/ghost off example.com` for one site (`here` is the tab you opened the popup over).
 
 To try it, load `build/extension/chromium/` in `chrome://extensions` (developer mode, "Load unpacked"), or `build/extension/firefox/manifest.json` in Firefox's `about:debugging` ("This Firefox", "Load Temporary Add-on").
 

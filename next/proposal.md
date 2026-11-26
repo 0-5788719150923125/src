@@ -1,210 +1,151 @@
-# Proposal: a memory the swarm holds
+# A Memory the Swarm Holds
 
-> Status: **path A's mechanism is built** (2026-11-22): the swarm memory,
-> mixed into the ghost text; tabs keep the rooms they have been in and
-> answer from them, weighted by room; test peers to try it (see CLAUDE.md,
-> "Swarm memory"). Trust and corroboration are not built.
-> Proposed 2026-11-21; supersedes the objectives in [witness.md](witness.md)
-> and [crawl.md](crawl.md). The experiments ran in Node and headless
-> Chromium on public data; their scripts were scratch and are not kept
-> here.
+*On growing intelligence in what a community remembers, not in what a machine was trained on.*
 
-## In one paragraph
+> Status: the first of three paths, the Library, is built: the ghost text asks the chat what it remembers. Trust earned by predicting is not built. Proposed 2026-11-21, after [witness.md](witness.md) and [crawl.md](crawl.md); the private version, for the extension's ghost on other sites, is [private-memory.md](private-memory.md).
 
-Stop trying to grow intelligence in weights; the swarm cannot out-train a
-datacenter. Grow it in **memory** instead. Every peer keeps some of the
-community's text with a small index (a suffix array, about 100 lines of
-plain JavaScript). The ghost text keeps its local model, and when the
-swarm remembers something that ends the way your line does, what came
-next is mixed into the model's guess. With nothing remembered, the ghost
-text is exactly what it is today. Nobody holds the memory; it
-gets better with every member and every day; every suggestion can name
-the passage it came from; deleting a passage removes it for good; and the
-peers who answer earn their say by predicting what people actually write
-next. A GPU cluster cannot copy this, because the data is the community's
-own, given on its terms, and the test is a future that has not been
-written yet.
+---
 
-## What the experiments say
+## The Town's Notebooks
 
-Data: Synthetic-Persona-Chat (21k two-person chats written by a language
-model, very formulaic) and MiniPile (real web text, varied). The model is
-the ghost text's own, SmolLM2-135M-Instruct, 8-bit, as on the site. "Top-1" is how often the
-first guess is the next token; perplexity is lower-is-better.
+Picture a town where nobody is a great writer, but everybody keeps a notebook of things they have heard said. You start a sentence at the market, and someone nearby says: "Funny, I heard almost exactly that last week. It went on like this." Nobody in town is especially clever. Together, they remember a great deal, and what they remember is the town's own way of talking.
 
-| | Synthetic chat | Real web text |
-|---|---|---|
-| The ghost text's model alone, top-1 | 47.0% | 39.8% |
-| Memory alone, 0.07M / 0.66M / 6.5M tokens | 50% / 59% / 63% | 20% / 22% / 26% |
-| Model and memory mixed, top-1 | 65.7% | 41.3% |
-| Model perplexity, alone and mixed | 8.9 to 4.5 | 23.5 to 21.3 |
-| Perplexity gain, by memory size | grows every tenfold | 1%, 3%, 9% |
+That is the whole proposal.
 
-- **Memory pays most when it holds the community's own way of talking.**
-  On text the model already knows (the web), it adds a modest gain that
-  keeps growing with size. Infini-gram reports 47% top-1 on human text at
-  1.4 trillion tokens; a swarm sits somewhere on that curve.
-- **A sharded memory answers like a single one.** Under "the longest match
-  wins, counts add", 100 shards gave the same answer as one index 949
-  times in 1,000 (the rest: ties, and matches across the cuts).
-- **It is cheap.** A peer's shard of 65k tokens indexes in 33 ms and takes
-  0.4 MB; 6.5M tokens take 9 s and 39 MB. A lookup costs about 30 µs.
-- **Trust by prediction works where voting fails.** Liars who claim the
-  longest match and push a spam token wiped out both plain counting and
-  median rank (0% correct, even with only 15 liars against 150 honest
-  peers). Counting only peers whose own predictions beat a public
-  word-frequency baseline, judged by everyone on what was actually said,
-  held at 61.6%, the same as with no liars, and dropped each liar within
-  its first prediction. Peers holding stories were dropped from chat rooms
-  on their own.
-- **Sneaky liars need a second rule; colluders need proof.** Liars who
-  answer honestly and spam 2% of the time keep their trust (28% of
-  positions spammed with 15 of them). One peer, one vote, with the longest
-  match counted only when two trusted peers reach it, cut that to 3.9% at
-  no cost to honest accuracy. Liars who spam together get through every
-  time (1.8%): they vouch for each other. That is what path C is for.
-- **Choosing what to keep can be learned.** Reading lists of 64 rooms,
-  bred and selected for predicting held-out chat, beat the best of as many
-  random lists, and the gain held on rooms selection never saw (about 13%
-  lower perplexity than a random list). Selection stalled after five
-  generations as the lists converged; real selection needs diversity.
+A swarm of browsers cannot out-train a datacenter. It will never have the chips, the power, or the data to grow a better model in weights. But it can out-remember one, on its own ground. A datacenter's model knows how the internet talks in general. It does not know how this chat talks: what was said in it yesterday, its running jokes, its names. The people who were there do.
 
-## Three paths
+So: stop trying to grow intelligence in weights, and grow it in memory instead.
 
-### A. The Library (recommended)
+---
 
-The swarm's memory, mixed into the ghost text. The ghost text is written
-into your own line, as INK@CORE; the local model keeps writing it, and the
-memory only adds to its guess.
+## How It Works
 
-- **It starts from nothing and still works.** The weight given to memory
-  is zero until something matches, so with no community the ghost text
-  behaves exactly as now. That is the point of keeping the model: it helps
-  a small room write, what the room writes becomes the memory, and the
-  memory's share grows as the room does.
-- Each peer keeps a shard: what it wrote, what its rooms said, and what it
-  chose to keep, the way it keeps radio songs (OPFS, re-seeded at load).
-  The stack's seeder keeps a large, always-on shard, as it already does
-  for the radio.
-- The writer mixes the swarm's answer into its model's scores before
-  choosing (the worker's `pick()` already takes scores). The weight given to memory
-  grows with match length, as fitted: none for one token, 0.3 to 0.6 for
-  medium matches, 0.85 past twelve.
-- Trust is earned by predicting, scored by everyone on public chat; one
-  peer, one vote; long matches need two trusted peers.
-- Learning is placement: passages that people accept (Tab) or that answer
-  often are kept by more peers; unused ones fade. The library curates
-  itself, like a swarm deciding which pieces to seed.
+The ghost text keeps its small model, running on the visitor's own device. The model guesses how a line goes on, a piece at a time, as it always has.
 
-Gives: better ghost text that sounds like this community, with every
-suggestion traceable to a passage, and forgetting by deletion.
+Alongside it, every peer keeps some of the community's text, with an index that can find, in a fraction of a millisecond, the longest stretch of that text ending the way your line ends, and what came after it. (The index is a *suffix array*: every position in the text, sorted by what comes before it, so that matching endings sit side by side. It is about a hundred lines of plain JavaScript.)
 
-**PEN as the memory's voice (optional).** PEN does not speak today. The
-memory could give her a reason to, without /call: when what is being said
-matches something the room said before at length, PEN recalls it, with
-where it came from. Rare by construction (only long matches), and
-rate-limited. This is the same memory, used to remember out loud rather
-than to finish your line.
+As you type, your browser asks the peers it is connected to: has anyone seen a line that ends like mine? Each one answers with how long its match is, and what followed. The answers are pooled, and what came next is mixed into the model's own guess. A long match counts for a lot, a short one for little, and anything under eight characters for nothing.
+
+Three things follow from this design, and they are the reasons for it.
+
+**It starts from nothing and still works.** With nothing remembered, the memory's share is zero, and the ghost text is exactly the model's. A brand-new chat is no worse off than before. The model helps a small chat write, what the chat writes becomes the memory, and the memory's share grows as the chat does.
+
+**Nobody holds it.** The memory is spread over everyone who was there. It gets better with every member and every day, and no single machine can take it away.
+
+**It can be accounted for.** Every suggestion comes from a passage someone said, which could be named. And forgetting is deletion: remove a passage, and it is gone for good, which no trained model can promise.
+
+One more is a hope rather than a result: **peers would earn their say by predicting.** A peer whose memory keeps guessing what people actually write next deserves more weight than one whose memory does not. A datacenter cannot copy that, because the data is the community's own, given on its terms, and the test is a future that has not been written yet.
+
+---
+
+## What the Experiments Said
+
+Before building anything, we tried the idea on public data, with the ghost text's own model.
+
+**Memory pays most when it holds the community's own way of talking.** On formulaic chat (two-person conversations written by a language model), mixing in the memory lifted how often the model's first guess was right from 47% to 66%. On varied web text, which the model already knows well, the gain was small (40% to 41%), but it kept growing as the memory grew. Real chat in The Source sits somewhere between the two.
+
+**A memory split across many peers answers like one.** With the text cut into 100 pieces, each indexed on its own, and the rule "the longest match wins, and equal matches add up", the pieces gave the same answer as one big index 949 times in 1,000. The rest were ties, and matches that crossed a cut.
+
+**It is cheap.** A peer's share of 65,000 words and word pieces indexes in 33 milliseconds, and a lookup takes about 30 millionths of a second.
+
+**Voting fails against liars; trust by prediction does not.** Fifteen liars among 150 honest peers, each claiming the longest match and pushing a spam word, wiped out plain counting entirely: not one right answer. Counting only the peers whose own predictions had beaten a simple baseline, judged by everyone against what was actually said next, held accuracy where it was with no liars at all, and dropped each liar after its first prediction.
+
+**Sneaky liars need a second rule; liars working together need proof.** Liars who answer honestly and spam only 2% of the time keep their trust. Giving each peer one vote, and counting the longest match only when two trusted peers reach it, cut the positions they spoiled from 28% to 3.9%, at no cost to honest accuracy. Liars who spam *together* still get through every time they try: they vouch for each other. That is what the third path below is for.
+
+**What to keep can be learned.** Reading lists of 64 chats, bred and selected for how well they predicted chat they had not seen, beat random lists by about 13%, even on chats the selection never saw. But selection stalled after five generations, as the lists all came to look alike. Real selection needs variety.
+
+---
+
+## Three Paths
+
+### A. The Library
+
+The swarm's memory, mixed into the ghost text, as described above. This is the base, and it stands alone.
+
+- Each peer keeps a share: what it wrote, and what its chats said.
+- Always-on servers keep large shares (since built: the library servers, which read chosen open-source projects).
+- The memory's weight grows with the length of the match.
+- Trust is earned by predicting, scored by everyone on public chat; one peer, one vote; long matches need two trusted peers.
+- Learning is placement: passages that people keep with Tab, or that answer often, would be kept by more peers, and unused ones would fade. The library would curate itself, the way a swarm decides which pieces of a torrent to keep seeding.
+
+A smaller idea rides along: **PEN as the memory's voice.** PEN no longer speaks in chat. The memory could give her a reason to, rarely: when what is being said matches, at length, something the chat said before, PEN recalls it, and says where it came from. The same memory, used to remember out loud instead of finishing your line.
 
 ### B. The Daemons
 
-Living voices. A daemon is a reading list: a set of passages from the
-library, spoken through an unbounded-order chain. Daemons already name
-every visitor; here they would talk in chat, deterministically by clock,
-so every browser prints the same line and nothing is sent. People's
-responses are the fitness: replies, quotes, Tab-acceptances of a daemon's
-words. Daemons breed (merge reading lists) and mutate (swap passages).
-Over months the population drifts toward what the community answers.
-Electric Sheep (1999, still running) is the precedent: a distributed
-screensaver whose animations are bred by viewers' votes.
+Living voices. A daemon would be a reading list: a set of passages from the library, spoken through a simple chain of what tends to follow what. Daemons already name every visitor (the ticker's `daemon`); here they would talk. Every browser would run them by the clock, so every browser prints the same line at the same moment, and nothing is sent. People's responses would be their fitness: replies, quotes, words kept with Tab. Daemons would breed (merging reading lists) and mutate (swapping passages), and over months the population would drift toward what the community answers.
 
-Gives: something that is alive, belongs to the place, and cannot be
-emulated without the place. Risk: it fills chat, which is why /call and
-the random replies were removed; it needs a rate and a room of its own.
+The precedent is Electric Sheep, a screensaver running since 1999, whose animations are bred by its viewers' votes.
+
+It would give something alive, that belongs to the place and cannot be copied without the place. The risk is that it fills the chat, which is why PEN's replies in chat were removed; it would need a slow pace and a chat of its own.
 
 ### C. The Witness
 
-Certainty instead of trust. A peer commits to its shard (a Merkle root,
-or a torrent's info hash) before the conversation exists. An answer
-carries a proof against that commitment. Over a suffix array, a Merkle
-tree can prove not only that a passage is there but how many times: the
-two ends of the matching range, and their neighbors that do not match.
-Colluders cannot prove matches their committed text does not hold, and
-text committed before a conversation cannot contain its future. Proof
-size is a few dozen hashes. The pieces exist (authenticated key-value
-stores prove membership and absence over sorted data); the combination
-does not appear in the literature. A further step, hiding which peer
-answered (zero-knowledge membership proofs, as in Semaphore), protects
-members and also shields abusers, and costs seconds per proof in a
-browser: too early, and to be decided on purpose.
+Certainty instead of trust. A peer would commit to its share of the memory, publishing a fingerprint of it (a torrent's info hash would do), before any conversation happens. Each answer would then carry a short proof against that fingerprint: not only that the passage is there, but how many times. Liars working together could not prove matches their committed text does not hold, and text committed before a conversation cannot contain its future. A proof would be a few dozen fingerprints long.
 
-Gives: answers anyone can check, and the defense against collusion that
-A lacks.
+The pieces exist; the combination does not appear in the literature. A further step, hiding which peer answered, would protect members and also shield abusers, and costs seconds per proof in a browser: too early, and something to decide on purpose.
 
-## How they fit
+### How They Fit
 
-A stands alone and is the base. B reuses A's indexes for a different
-purpose. C hardens A. A suggested order: A, then C's commitments (cheap),
-then B if the room wants it.
+A is the base. C hardens it against liars working together. B reuses A's memory for another purpose. The suggested order: A, then C's commitments (they are cheap), then B if the community wants it.
 
-## Constraints, answered
+---
 
-- **Browser, plain JavaScript.** The index, lookup and vote are typed
-  arrays and binary search; nothing to install.
-- **Peers are slow and expensive.** An answer is a match length and a few
-  candidates, tens of bytes. Asking for spans (the next several tokens)
-  cuts round trips; ghost text can ask ahead while the visitor types. At
-  first a query goes to the 20-30 peers a tab is connected to anyway;
-  larger swarms need routing by hashed n-grams (who holds what), which is
-  the main engineering problem at scale.
-- **Sticky, long-term.** The memory is as permanent as the peers who keep
-  it, and the seeder keeps a copy. Trust accumulates across rooms and
-  days. The model improves only by members adding text and by the swarm
-  learning what to keep: slow, and it never has to start over.
+## What Happened Next
+
+Path A was built, step by step:
+
+- **The memory** (`memory.js`), in characters rather than word pieces, so peers need no model to split text and any language works.
+- **Asking the chat** (`recall.js`): questions and answers travel beside the chat's messages, to every peer connected.
+- **Tabs remember** (`library.js`): every tab keeps the newest lines of the chats it has been in, and answers from them. A line from the chat the question came through counts fully; lines from other chats count for less. Careless lines (mashed keys, shouting, repeats) are not kept, and careful ones count for more (`quality.js`).
+- **Library servers** (`containers/node/peers.js`): always-on peers that read chosen open-source projects and answer from them.
+- **The ghost never waits for the swarm** (2026-11-25/26): the first guess goes ahead at once, and a strong answer that comes late and disagrees rewrites it, once.
+- **Sealed questions** for the browser extension, which writes in other sites' fields, where an open question would show strangers what you type: [private-memory.md](private-memory.md).
+
+It does what the experiments promised. In a browser, with two peers holding a collection of children's stories, the ghost reproduced the stories' own next 30 characters 76% of the time; the model alone, 7%. In a chat with a library server holding the old site's archive, "The Source Codes describe an interdimensional" went on with the old site's own lore, where the model alone wrote something generic.
+
+Not built:
+
+- **Trust by prediction**, and counting long matches only when two trusted peers agree. Each peer has one vote, and that is all.
+- **Placement**: popular passages spreading to more peers, unused ones fading.
+- **The real test**: whether people keep more ghost text with the swarm than without it, chat by chat.
+- Paths B and C.
+
+---
 
 ## Risks
 
-- **Synthetic chat flatters the memory.** Real chat in The Source sits
-  between the two columns above; only the site can say where.
-- **Copying.** An unbounded chain repeats long spans word for word: whose
-  words get repeated, and with what credit, is a design question as much
-  as a technical one.
-- **Queries reveal what you are typing** to the peers asked. Hashed n-grams
-  help; short ones can be guessed. Asking only for spans already said in
-  the room, or only on pause, limits it.
-- **Trust ranks predictors.** It ranks shards by how well they predict, not
-  people by worth, but it is a ranking, and witness.md said not to build
-  those. Worth keeping invisible.
-- **Selection collapses.** Bred reading lists converged in five generations
-  in the toy. Fitness from many different people is the hope, not a
-  result.
+- **Formulaic chat flatters the memory.** The big gain came from chat written by a model. Only the site itself can say where real chat falls.
+- **Copying.** A memory repeats long passages word for word. Whose words get repeated, and with what credit, is a design question as much as a technical one.
+- **Questions reveal what you are typing** to the peers asked. In the chat, that is accepted: the chat is public anyway. In other sites' fields, the questions are sealed ([private-memory.md](private-memory.md)).
+- **Trust ranks predictors.** It would rank shares of memory by how well they predict, not people by worth, but it is still a ranking, and [witness.md](witness.md) said not to build those. Worth keeping invisible.
+- **Selection collapses.** The bred reading lists converged in five generations. Fitness drawn from many different people is the hope, not a result.
 
-## First steps, if A
+---
 
-1. ~~The index and the vote as a module in `src/js/`, tested under Node.~~
-   Done: `memory.js`, in characters rather than tokens, so peers need no
-   tokenizer and any language works.
-2. ~~Ask the room's peers over the chat wires (a second BEP 10
-   message).~~ Done: `recall.js`. ~~Each tab indexes its own rooms'
-   history and answers too.~~ Done: `library.js`, with the vote weighted
-   by room (the room asked through counts fully, others for 0.3).
-3. ~~Mix into the writer's guesses.~~ Done, and the writer asks again as it
-   writes. Still to do: measure accepted ghost text (Tab) with and without
-   the swarm, per room. That is the real test.
-4. Trust scoring and corroboration (one peer, one vote is in), then the
-   seeder's shard.
+## The Numbers
+
+The data: Synthetic-Persona-Chat (21,000 two-person chats written by a language model, very formulaic) and MiniPile (real web text, varied). The model: SmolLM2-135M-Instruct at 8 bits, as on the site. "First guess right" is how often the top guess is the next token. "Perplexity" is how surprised the model is by the real text; lower is better.
+
+| | Formulaic chat | Real web text |
+|---|---|---|
+| The model alone, first guess right | 47.0% | 39.8% |
+| The memory alone, at 0.07M / 0.66M / 6.5M tokens | 50% / 59% / 63% | 20% / 22% / 26% |
+| Model and memory mixed, first guess right | 65.7% | 41.3% |
+| Perplexity, alone and mixed | 8.9 to 4.5 | 23.5 to 21.3 |
+| Perplexity gain, at each tenfold of memory | grows each time | 1%, 3%, 9% |
+
+Infini-gram, a memory of 1.4 trillion tokens, reports 47% on human text from memory alone; a swarm sits somewhere on that curve.
+
+Cost: 65,000 tokens index in 33 ms and take 0.4 MB; 6.5 million take 9 s and 39 MB; a lookup takes about 30 µs. As built, in characters: 2 million characters index in about 3.3 s, and a lookup takes 0.04 ms.
+
+Liars, against 150 honest peers: with none, 61.6% right; with 15 pushing spam, 0% under plain counting or median rank, and 61.6% under trust by prediction. Fifteen sneaky liars (spamming 2% of the time) spoiled 28% of positions, 3.9% with one vote each and long matches confirmed by two trusted peers. Spammers working together got through every time they tried (1.8% of positions).
+
+---
 
 ## Sources
 
 - Infini-gram (Liu et al., COLM 2024): arxiv.org/abs/2401.17377
 - Electric Sheep (Draves, 1999): en.wikipedia.org/wiki/Electric_Sheep
-- Authenticated key-value stores (Merkle trees over sorted data prove
-  membership and absence): arxiv.org/pdf/1904.12068
-- Neighbors, for contrast: Petals and Pooled (neural layers split across
-  peers), De-DSI (decentralized retrieval, arxiv.org/abs/2404.12237),
-  ZKPROV (zero-knowledge dataset provenance, arxiv.org/abs/2506.20915).
-- From memory, unchecked: kNN-LM (2020), RETRO (2022), cache language
-  models (1990), Prediction by Partial Matching (1984), Semaphore, and the
-  median-based aggregation literature (coordinate-wise median and
-  geometric median in robust distributed learning; median rank
-  aggregation; majority judgment).
+- Authenticated key-value stores (fingerprint trees over sorted data prove both presence and absence): arxiv.org/pdf/1904.12068
+- Neighbors, for contrast: Petals and Pooled (neural network layers split across peers), De-DSI (decentralized retrieval, arxiv.org/abs/2404.12237), ZKPROV (zero-knowledge dataset provenance, arxiv.org/abs/2506.20915).
+- From memory, unchecked: kNN-LM (2020), RETRO (2022), cache language models (1990), Prediction by Partial Matching (1984), Semaphore, and the literature on median-based aggregation (coordinate-wise and geometric medians in robust distributed learning, median rank aggregation, majority judgment).

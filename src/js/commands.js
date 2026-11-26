@@ -1,11 +1,14 @@
 // Every command the terminal knows, as data.
 //
 //   run       called with the command's arguments
+//   options   what its argument may be, best first: as the command is
+//             typed, the ghost suggests the first that fits (complete)
 
 import { about } from './about.js'
 import * as chat from './chat.js'
 import { clear, say } from './print.js'
 import { radio } from './radio.js'
+import * as writer from './writer.js'
 
 export const COMMANDS = [
     { name: '/about', run: about },
@@ -13,11 +16,27 @@ export const COMMANDS = [
     { name: '/clear', run: clear },
     { name: '/chat', run: chat.setChat },
     { name: '/help', run: help },
+    { name: '/model', run: writer.setModel, options: writer.modelNames },
     { name: '/radio', run: radio },
     { name: '/reset', run: reset }
 ]
 
 export const find = (name) => COMMANDS.find((command) => command.name === name)
+
+// What the ghost suggests for a command line (ghost.js): the rest of the
+// first option that starts with the argument typed so far, in any case,
+// with the space before it while that is still to come; '' when none fits.
+export function complete(line) {
+    const [, name, space, typed] = /^\s*(\/\S+)(\s?)(\S*)$/.exec(line) ?? []
+    const option = find(name?.toLowerCase())
+        ?.options?.()
+        .find(
+            (option) =>
+                option.length > typed.length &&
+                option.toLowerCase().startsWith(typed.toLowerCase())
+        )
+    return option ? (space ? '' : ' ') + option.slice(typed.length) : ''
+}
 
 function help() {
     say({ list: COMMANDS.map((command) => command.name).sort() })

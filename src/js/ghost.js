@@ -7,8 +7,11 @@
 // the end of the word where the finger lifts (drawn back, it keeps less;
 // back past the ghost's start, nothing). Escape dismisses the ghost. Typing
 // what it shows keeps it; typing anything else stops it at once, and a new
-// guess comes once the typing pauses. Commands get no guesses.
+// guess comes once the typing pauses. Commands get no guesses from the
+// model; a command that takes a name (/model) gets the names suggested
+// instead, at once, and they are taken the same way.
 
+import { complete } from './commands.js'
 import * as writer from './writer.js'
 import { ahead } from './predict.js'
 
@@ -23,13 +26,13 @@ const view = document.getElementById('ghost')
 const taking = document.getElementById('taking') // what a swipe would keep, drawn as typed
 const typed = document.getElementById('typed')
 
-let current = null // { id, base, written, done }: the line it guessed from, and the guess so far
+let current = null // { id, base, written, done }: the line it guessed from, and the guess so far (id 0: a command's suggestion)
 let line = '' // the line as last seen
 let timer = null
 let watchdog = null
 let retries = 0 // for the line as it stands
 
-const wanted = (text) => text.trim() !== '' && !text.trimStart().startsWith('/')
+const isCommand = (text) => text.trimStart().startsWith('/')
 const atEnd = () =>
     document.activeElement === input &&
     input.selectionStart === input.value.length &&
@@ -38,7 +41,12 @@ const shown = () => (current ? ahead(current, input.value) : null)
 
 function ask() {
     const base = input.value
-    if (!wanted(base) || !writer.isReady()) return
+    if (isCommand(base)) {
+        const rest = complete(base)
+        if (rest) current = { id: 0, base, written: rest, done: true }
+        return draw()
+    }
+    if (!base.trim() || !writer.isReady()) return
     const id = writer.guess(base, (ghost) => {
         if (current?.id !== id) return
         clearTimeout(watchdog)
@@ -68,7 +76,7 @@ function ask() {
 }
 
 function drop() {
-    if (current) writer.stop()
+    if (current?.id) writer.stop()
     current = null
     clearTimeout(timer)
     clearTimeout(watchdog)
@@ -84,7 +92,8 @@ function changed(again = false) {
     // something to show or is still being written.
     if (rest === null || (rest === '' && current.done)) {
         drop()
-        timer = setTimeout(ask, PAUSE)
+        if (isCommand(line)) ask()
+        else timer = setTimeout(ask, PAUSE)
     }
     draw()
 }
@@ -319,5 +328,5 @@ export function attach() {
     window.addEventListener('resize', draw)
     document.fonts?.ready.then(draw)
     // A line typed while the model loaded is guessed once it is ready.
-    writer.whenReady.then(() => changed(true))
+    writer.onReady(() => changed(true))
 }

@@ -47,6 +47,7 @@ import { radio, restore } from './js/radio.js'
 import * as recall from './js/recall.js'
 import { state } from './js/state.js'
 import { load as loadText, t } from './js/text.js'
+import { chosen, dropUntried, keepChosen } from './js/writer.js'
 
 const api = globalThis.browser ?? globalThis.chrome
 const IDLE = 30 * 60 * 1000 // ms without a guess before the model is let go
@@ -59,6 +60,7 @@ const START_LIMIT = 12000
 const pages = new Set()
 const terminals = new Set()
 let worker = null
+let running = null // the model the worker holds (writer.js MODELS)
 let ready = false
 let status = null // the worker's last word on itself, for the terminal's ticker
 let current = null // { id, port, theirs, terminal }: the guess being written, by worker id and its asker's own
@@ -73,6 +75,7 @@ const texts = loadText()
 
 function start(threads = 0) {
     ready = false
+    running = chosen()
     worker = new Worker(new URL('./js/writer.worker.js', import.meta.url), {
         type: 'module'
     })
@@ -112,6 +115,7 @@ function start(threads = 0) {
         if (data.ready) {
             clearTimeout(watchdog)
             ready = true
+            keepChosen()
             badge('')
             if (current?.waiting)
                 worker.postMessage({ ...current.waiting, id: current.id })
@@ -137,6 +141,7 @@ function start(threads = 0) {
     worker.postMessage({
         command: 'load',
         text: { preamble: t('pen.preamble'), threads },
+        model: running,
         lines: conversation
     })
 }
@@ -146,13 +151,16 @@ function stop() {
     worker?.terminate()
     worker = null
     ready = false
+    status = null
     current = null
     for (const port of pages) port.postMessage({ ready: false })
 }
 
 // Let the model go after IDLE without a guess; the next to ask starts it
-// again.
+// again. Another model chosen in a terminal (/model, kept in the
+// localStorage this page shares with it) replaces the one running.
 function rest() {
+    if (worker && running !== chosen()) stop()
     if (!worker) start()
     clearTimeout(idle)
     idle = setTimeout(stop, IDLE)
@@ -231,8 +239,11 @@ function onPage(port, message) {
 function onTerminal(port, message) {
     const command = message?.command
     // The conversation is the chat's, kept here: a terminal's own is not.
-    if (command === 'load') rest()
-    else if (command === 'guess') {
+    // Ready is said in answer, once the model it chose is.
+    if (command === 'load') {
+        rest()
+        if (ready) port.postMessage({ ready: true })
+    } else if (command === 'guess') {
         rest()
         // Asked while the model (re)starts: sent once it is ready.
         current = {
@@ -361,6 +372,8 @@ texts.then(async () => {
     // After /reset (terminal.js), everything is forgotten before anything
     // starts: storage, songs, the model's weights.
     if (localStorage.getItem('reset')) await forgetEverything()
+    // A model chosen last time that never came ready is not tried again.
+    dropUntried()
     // The welcome line first, at the top of the terminal's history.
     say(t('ghost.info'))
     // Back in the chat it was in (chat.js reads it from the address).
@@ -391,7 +404,7 @@ api.runtime.onConnect.addListener((port) => {
         kind.ports.add(port)
         if (kind.ports === screens) return onScreenOpen(port)
         rest()
-        if (ready) port.postMessage({ ready: true })
+        if (kind.ports === pages && ready) port.postMessage({ ready: true })
         if (kind.ports === terminals && status) port.postMessage({ status })
     })
     port.onMessage.addListener((message) =>

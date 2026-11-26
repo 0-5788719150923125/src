@@ -14,8 +14,7 @@
 // (autocomplete: payment, address, phone, one-time codes...), never a code
 // editor (which wants Tab for itself), and only while the caret is at the
 // end of what is written (anything but spaces after it, and the guess
-// would be drawn over it). /ghost in the terminal turns it off everywhere
-// or on one site (chrome.storage).
+// would be drawn over it).
 //
 // What is typed goes to the extension's own model (host.js), which asks
 // the swarm's memory about it only as an encrypted question. The
@@ -52,10 +51,10 @@ import { ahead } from '../src/js/predict.js'
     // How faded the guess is: the field's own text color, at this opacity.
     const FADE = 0.5
 
-    // ------------------------------------------------------------ settings
+    // ------------------------------------------------------------ the site
 
-    // The site, for /ghost's per-site setting: an about:blank or srcdoc
-    // frame has no host of its own, but its parent's origin.
+    // Its host, which the guess reads (ghost.preamble): an about:blank or
+    // srcdoc frame has no host of its own, but its parent's origin.
     const site = (() => {
         try {
             return location.hostname || new URL(origin).hostname
@@ -63,25 +62,6 @@ import { ahead } from '../src/js/predict.js'
             return ''
         }
     })()
-    let settings = { on: true, sites: {} }
-    const enabled = () =>
-        Boolean(site) && (settings.sites?.[site] ?? settings.on) !== false
-    const read = (stored) => {
-        if (stored && typeof stored === 'object')
-            settings = { on: stored.on !== false, sites: stored.sites || {} }
-    }
-    api.storage?.local.get('ghost').then(
-        (got) => read(got?.ghost),
-        () => {}
-    )
-    api.storage?.onChanged.addListener((changes, area) => {
-        if (area !== 'local' || !changes.ghost) return
-        read(changes.ghost.newValue)
-        if (!enabled()) {
-            drop()
-            draw()
-        }
-    })
 
     // ------------------------------------------------------------ fields
 
@@ -300,7 +280,7 @@ import { ahead } from '../src/js/predict.js'
     }
 
     function ask() {
-        if (!field || !enabled()) return
+        if (!field) return
         const state = caretIn(field)
         if (!state?.atEnd || !wanted(state.before)) return
         connect()
@@ -343,7 +323,7 @@ import { ahead } from '../src/js/predict.js'
 
     // Called whenever the text or the caret may have changed.
     function changed(again = false) {
-        if (!field || !enabled()) return draw()
+        if (!field) return draw()
         const state = caretIn(field)
         const before = state?.before ?? null
         if (before === last && !again) return draw()
@@ -466,7 +446,7 @@ import { ahead } from '../src/js/predict.js'
     const px = (value) => parseFloat(value) || 0
 
     function draw() {
-        const state = field && enabled() ? caretIn(field) : null
+        const state = field ? caretIn(field) : null
         const rest = state?.atEnd ? shown(state) : null
         if (!rest) return hide()
         const hidden =
@@ -685,7 +665,7 @@ import { ahead } from '../src/js/predict.js'
 
     // The field the focus went to, if it gets guesses.
     function onFocus() {
-        const found = enabled() ? fieldOf(focused()) : null
+        const found = fieldOf(focused())
         if (found?.el === field?.el) return
         release()
         drop()

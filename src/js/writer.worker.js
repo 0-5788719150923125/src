@@ -1,5 +1,6 @@
-// The model behind PEN@ROOT: an ONNX build of SmolLM2-135M-Instruct, run by
-// transformers.js on the CPU, with WebAssembly. Never WebGPU, on purpose:
+// The model behind PEN@ROOT: an ONNX build of SmolLM2-135M-Instruct, or of
+// the model chosen with /model (writer.js MODELS), run by transformers.js
+// on the CPU, with WebAssembly. Never WebGPU, on purpose:
 // most visitors don't have it, the site has no business taking theirs, and
 // where it does exist it shares memory with every other app on the machine
 // (Firefox on 2026-11-20 ran out and answered with noise). The page is
@@ -42,8 +43,8 @@ if (RUNTIME) {
     env.useWasmCache = false
 }
 
-const MODEL = 'HuggingFaceTB/SmolLM2-135M-Instruct'
-const NAME = 'SmolLM2-135M'
+let repo = '' // the model to load, on Hugging Face, and its name (writer.js MODELS)
+let name = ''
 // Tokens of conversation the model reads: once they pass MOST, the start
 // jumps ahead until LEAST remain. Between jumps the start stays put, and
 // with it everything cached.
@@ -123,7 +124,7 @@ function report(fields) {
     const status = JSON.stringify(fields)
     if (status === reported) return
     reported = status
-    postMessage({ status: { model: NAME, device: DEVICE, ...fields } })
+    postMessage({ status: { model: name, device: DEVICE, ...fields } })
 }
 
 function usage() {
@@ -169,10 +170,10 @@ async function load(text) {
     // One thread when asked: writer.js asks after a start that hung (ONNX
     // Runtime's threads sometimes never come up in Firefox).
     if (text.threads) env.backends.onnx.wasm.numThreads = text.threads
-    tokenizer = await AutoTokenizer.from_pretrained(MODEL, {
+    tokenizer = await AutoTokenizer.from_pretrained(repo, {
         progress_callback
     })
-    model = await AutoModelForCausalLM.from_pretrained(MODEL, {
+    model = await AutoModelForCausalLM.from_pretrained(repo, {
         device: DEVICE,
         // 8-bit weights: the fastest on the CPU (measured 2026-11-21: 4-bit
         // reads a prompt 1.1-1.3x slower and writes 2.5-3x slower; full
@@ -228,9 +229,9 @@ async function step(next) {
     })
     busy.push([started, performance.now() - started])
     const past = {}
-    for (const name in out)
-        if (name.startsWith('present'))
-            past[name.replace('present', 'past_key_values')] = out[name]
+    for (const key in out)
+        if (key.startsWith('present'))
+            past[key.replace('present', 'past_key_values')] = out[key]
     cache = { ids: [...cache.ids, ...next], past }
     const size = out.logits.dims.at(-1)
     return out.logits.data.subarray(out.logits.data.length - size)
@@ -480,9 +481,10 @@ async function guess(
 onmessage = ({ data }) => {
     if (data.command === 'load') {
         lines = data.lines ?? []
+        ;({ repo, name } = data.model)
         load(data.text).catch((err) => {
             console.error(err)
-            postMessage({ status: { model: NAME, error: 'failed' } })
+            postMessage({ status: { model: name, error: 'failed' } })
         })
     } else if (data.command === 'remember') {
         // Lines before the start are never read again.

@@ -1,212 +1,115 @@
-# Crawl: a model that rides a wave by choosing what to read
+# Crawl
 
-> Status: **raw capture, two probes** (2026-11-18). Nothing is built.
-> Supersedes the objective in [witness.md](witness.md) and keeps its
-> counters. The probes, `crawl.mjs` and the earlier `counter_net.mjs` with
-> `WAVE` set, were removed on 2026-11-21 (in git history at commit
-> 6cd0317). Followed by [proposal.md](proposal.md).
+*On a model that rides a wave by choosing what to read.*
 
-## The one line
+> Status: superseded. Two probes, on 2026-11-18; nothing was built. It kept [witness.md](witness.md)'s tallies, looked for a better goal, and found a pace without a direction. Followed by [proposal.md](proposal.md). The probes are in git history, at commit 6cd0317.
 
-The loss is a clock, not a score. It rises and falls on a fixed wave, and the
-model stays on the wave by choosing which example to step along. The
-signature is the origin every step is measured from.
+---
 
-## The three parts
+## The Surfer
 
-- **The wave.** The target loss is periodic and costs as much as it rewards.
-  The model never converges, because there is nowhere to converge to. What
-  the wave carries is rhythm: when to pull an example toward the signature,
-  when to push it away, and how far.
-- **Weights in data-space.** Every input is a pair: a passage of the frozen
-  signature (bias) and a passage of something else (variance). The difference
-  between the two is a direction in weight space. In the probe this is
-  literal - the trigrams one passage has and the other lacks are an integer
-  vector that is added to the counters. No random seed and no backward pass.
-- **The crawl.** The model picks the example whose direction it needs to stay
-  on the wave. Most examples are never used. A step is a decision.
+A surfer does not try to reach the shore. The wave rises and falls on its own schedule, and the surfer's whole skill is staying on it: shifting weight forward, then back, a little at a time, choosing at each moment where to stand.
 
-## What a model is, under this
+The witness note ended with good machinery and a bad goal: telling members apart by their writing. This note tried a goal with nothing to win at all. The model's error would not be a score to drive toward zero. It would be a clock: a target that rises and falls on a fixed wave, forever. The model's job would be to stay on the wave, and its only way to move would be choosing what to read.
 
-A signature and a reading list: the passages chosen, in order, with a sign
-each. That is small enough to send, exact to replay, and legible - every
-weight traces to something the model chose to read. It still folds into
-integer counters, so the swarm properties in witness.md carry over.
+Why would that be good? There were three hopes.
 
-The other half of each pair can be any text at all. Nothing here needs one
-member's writing compared with another's, so nothing is trained to tell
-members apart.
+**It never converges**, so it can never collapse into everyone sounding alike. There is nowhere to converge to.
 
-## What the probes show
+**Every change comes from something read.** Each step starts from a pair: a passage of the member's own writing (their *signature*, fixed, the origin everything is measured from) and a passage of anything else. The difference between the two, quite literally the three-letter fragments one has and the other lacks, is a step the model can take, pushing the two apart or pulling them together. No random coin flips, and no calculus.
 
-### Random steps cannot ride
+**A model would be a reading list.** The signature, plus the passages chosen, in order, each with a sign. Small enough to send, exact to replay, and legible: every weight traces back to something the model chose to read. And nothing in it compares one member's writing with another's, so nothing learns to tell members apart.
 
-The earlier probe (counter_net.mjs, random directions and sign votes, seven
-documents) was told to hold the mine-to-other distance on a sine wave. With
-one wave for every pair it rode along by swelling and shrinking everything
-together, and learned nothing. With a separate phase per document it could
-not keep up at all. Both results said the steps have to come from the data.
+---
 
-### Steps taken from the data can
+## What the Probes Showed
 
-The probe was `crawl.mjs`. The corpus is 4,484 prose documents of
-4 KiB from MiniPile, standing in for FineWeb, which was not on disk. 800 are
-held out and never read. Each of 128 peers takes one document as its
-signature. The other 3,556 are the library.
+**Random steps cannot ride.** The witness probe, told to hold its distances on a wave, either swelled and shrank everything together and learned nothing, or could not keep up at all. The steps had to come from the text.
 
-The model is one table: 8,192 hashed trigram rows by 16 columns of integer
-counters. A passage is the set of trigrams it contains, and its embedding is
-the sum of their rows. A peer's loss is its mean distance from four signature
-passages to four library passages it drew once and keeps as a ruler. Its wave
-runs 25% above and below where that loss started, 128 ticks to a cycle.
+**Steps taken from the text can.** In the second probe, 128 peers each took one web document as their signature, and all of them shared one table of tallies. At each tick, a peer that had drifted off its wave was offered eight random passages from a library of 3,556 documents, and could step along one. The peers held within about 1% of their wave, and most ticks needed no step at all. A peer that chose the passage it needed took about 30% fewer steps than one that took whatever came. Even when every peer decided before anyone's step landed, the wave held, at about three times the steps.
 
-Each tick, a peer more than 2% off its wave is offered eight fresh library
-passages. It may step along one: add the difference between a signature
-passage and that passage to the table, pushing the two apart or pulling them
-together. Every peer steps on the same table. Every run replays backward to
-the same table, bit for bit.
+**But a wave ridden well leaves nothing behind.** Tested on 800 documents nobody read, the table was no better at telling which passages belonged together than when it started. Pushes and pulls along different passages mostly neither cancelled nor added up; the table wandered, like a random walk.
 
-The score is taken on the held-out documents: how often a passage sits closer
-to the other half of its own document than to a stranger's. Chance is 0.5.
-The untrained table scores 0.612 and uses 15.2 of its 16 directions.
+**The one rule that learned ran away.** "Push the farthest passage away, pull the nearest closer" did learn: in two cycles, about half as much as a version simply told the right answers. It did it by piling the whole table onto a single direction. Then the peers lost the wave, and the score sank below where it had started. A more careful version, taking only steps predicted to help, held on one cycle longer and ended the same way.
 
-One wave for the whole swarm, six cycles:
+**A still core, and separate tendrils.** Give each peer its own phase on the wave, and 128 peers ride 128 waves on one shared table, each moving rows nobody else moves, while text nobody holds barely moves at all. That was the shape predicted: a stable core, with a tendril for each peer. But the core was still only because nobody moved it; it was the untrained table. And a tendril held its peer on the wave, and nothing could be asked of it.
 
-| How a peer chooses | Miss | Ticks used | Held-out score | Directions |
+**More peers still ride, but harder.** At 512 peers instead of 128, each worked harder to hold its place, and the table got a little worse. The limit was never computing power. It was how much one peer's step moves another's.
+
+---
+
+## The Gap
+
+A wave says *when* to move, and *how far*. It does not say *what to learn*.
+
+The probe made that concrete. Held on the wave by a rule with no preference, the table drifts and keeps nothing. Whatever is learned has to come from a difference between what gets chosen on the way up and what gets chosen on the way down. The one such difference tried, by distance, feeds on itself: far things are pushed farther, until one direction holds everything.
+
+The wave cannot stop that. It fixes one number per peer, and leaves the table free to take any shape that keeps that number. The wave is a pace, not a direction.
+
+So the open problem, restated: a rule for what to read whose preference adds up across many directions, and does not feed on itself. What the whole thing was *for* stayed open too. The best answer at the time: a model whose history is complete, because it is nothing but the list of what it read.
+
+---
+
+## What Survived
+
+[proposal.md](proposal.md) dropped the goal of growing a model in weights, and grew it in memory instead. But the reading list carried over. The proposal's daemons are reading lists, and its library learns by choosing what to keep, not by changing weights. And when the proposal bred reading lists, it ran into this note's warning: selection converged within five generations.
+
+---
+
+## The Next Probe, Had It Gone On
+
+- **A reference that does not collapse.** The version told the right answers also ended on one direction, so nobody knows what the table's sixteen directions could hold. Keep the directions apart while pulling each document's passages together, and see.
+- **A preference that does not feed on itself.** Let each direction choose its own passage, so they cannot all follow the same one. Or pull only with two passages of the signature, the one thing a peer knows goes together, and push only with the library.
+
+If the better reference scored no higher than the first, the table would be too small to say anything, and the test should change before the rule does.
+
+---
+
+## Older Ideas Nearby
+
+From memory, not checked against sources:
+
+- Learning with one phase that learns and one that unlearns, cancelling at balance: Boltzmann machines, wake-sleep, contrastive Hebbian learning.
+- A teaching signal that oscillates, with the change read off at the wave's own frequency: Baldi and Pineda (1991), holomorphic equilibrium propagation (2022). The engineering name is a lock-in amplifier.
+- Weights written as a signed list of examples: support vectors, and the perceptron, which updates only when it must.
+- Choosing the examples that steer a learner: machine teaching, active learning.
+- Holding a loss at a level instead of at zero: flooding (2020).
+- Strengthening what is already strong until one direction wins, and the fixes added to keep several apart: Hebbian learning, Oja's rule, Sanger's rule.
+
+---
+
+## The Numbers
+
+The corpus: 4,484 web documents of 4 KiB each from MiniPile; 800 held out and never read, 128 taken as signatures, 3,556 in the library. The table: 8,192 rows of hashed three-letter fragments, by 16 columns of whole-number tallies. A peer's wave ran 25% above and below its starting error, 128 ticks to a cycle, for six cycles. The score: how often a held-out passage sits closer to the other half of its own document than to a stranger's (chance is 0.5; the untrained table scored 0.612).
+
+One wave for the whole swarm:
+
+| How a peer chose | Off its wave | Ticks with a step | Held-out score | Directions used, of 16 |
 |---|---|---|---|---|
-| random: any passage on offer | 0.012 | 0.18 | 0.609 to 0.620 | 14.9 |
-| fit: the one predicted to land nearest the wave | 0.011 | 0.13 | 0.616 to 0.625 | 14.7 |
-| soften: push the nearest, pull the farthest | 0.013 | 0.19 | 0.610 to 0.617 | 15.4 |
-| sharpen: push the farthest, pull the nearest | 0.013, then 1.13 | 0.19, then 0.89 | 0.680 at cycle 2, 0.625 at cycle 6 | 1.1 |
-| lean: sharpen, among steps predicted to help | 0.012, then 0.27 | 0.16, then 0.73 | 0.649 at cycle 3, 0.582 at cycle 6 | 1.2 |
-| reference: no wave, told which passages share a document | - | 1.00 | 0.757 | 1.0 |
+| any passage on offer | 1.2% | 18% | 0.609 to 0.620 | 14.9 |
+| the one predicted to land nearest the wave | 1.1% | 13% | 0.616 to 0.625 | 14.7 |
+| push the nearest, pull the farthest | 1.3% | 19% | 0.610 to 0.617 | 15.4 |
+| push the farthest, pull the nearest | 1.3%, then 113% | 19%, then 89% | 0.680 at cycle 2, 0.625 at cycle 6 | 1.1 |
+| the same, only steps predicted to help | 1.2%, then 27% | 16%, then 73% | 0.649 at cycle 3, 0.582 at cycle 6 | 1.2 |
+| told which passages share a document, no wave | - | 100% | 0.757 | 1.0 |
 
-Miss is the mean gap between a peer's loss and its wave, in units of the
-loss at the start. The wave's height is 0.25.
+"Off its wave" is the average gap between a peer's error and its wave, as a share of its starting error.
 
-What this says:
-
-- **Riding works.** Steps taken from the data hold 128 peers within about 1%
-  of the wave, and most ticks need no step at all.
-- **Choosing makes riding cheaper.** A peer that picks the passage it needs
-  takes about 30% fewer steps than one that takes whatever comes. It does
-  not get cheaper from one cycle to the next.
-- **A wave ridden well leaves nothing behind.** Under random, fit and soften
-  the held-out score stays within 0.013 of the untrained table. The table's
-  net movement is what a random walk of the same steps would give, or a
-  little less. Pushes and pulls along different passages mostly neither
-  cancel nor add up.
-- **The one rule that leaves something runs away.** Sharpen lifts the score
-  by 0.07 in two cycles, about half of what the reference gains. It does it
-  by piling the table onto a single direction. Then the peers lose the wave
-  and the score decays. Lean, which takes only steps predicted to help, holds
-  the wave a cycle longer and ends the same way, below where it started.
-- **The reference is weak.** It also ends on one direction. So one learned
-  axis is worth 0.757 on this test, and what the table could hold across
-  sixteen is unknown.
-
-A second way of spreading a step over the columns (plain signs, `CODE=sign`)
-gives the same picture in every row.
-
-## Core and tendrils
-
-Across a swarm, every peer rides from a different origin. Steps that many
-peers take add up in the shared table; steps only one peer takes stay its
-own. The prediction was a stable core with a tendril per peer. Give every
-peer its own phase (`PHASE=own`) and the shape appears:
+One wave, against a phase of its own for every peer (choosing the passage predicted to land nearest):
 
 | | One wave | A phase per peer |
 |---|---|---|
-| Miss (fit) | 0.011 | 0.016 |
-| Ticks used (fit) | 0.13 | 0.33 |
-| Movement of held-out distances within a cycle | 0.33 | 0.01 to 0.02 |
-| Cosine between two peers' net contributions | 0.000 | -0.001 |
+| Off its wave | 1.1% | 1.6% |
+| Ticks with a step | 13% | 33% |
+| How much held-out distances moved within a cycle | 0.33 | 0.01 to 0.02 |
+| Overlap between two peers' net changes (cosine) | 0.000 | -0.001 |
 
-With phases spread around the cycle, 128 peers each ride their own wave on
-one table, and text that nobody holds barely moves. Each peer's movement sits
-in rows no other peer is moving. That is a still core and separate tendrils.
-
-What the numbers do not give:
-
-- **The core holds nothing.** It is still because nobody moves it. It is the
-  untrained table, and the held-out score says so (0.603 to 0.610).
-- **A tendril is a leftover so far.** It keeps one peer on its wave. Nothing
-  can be asked of it.
-
-On scale. A simulated swarm is one table, so cost grows with the number of
-peers and nothing else: about a thousand peer ticks a second on one core.
-The limit is not compute. It is how much one peer's step moves another
-peer's loss, and that already shows on 8,192 rows:
+More peers:
 
 | | 128 peers | 512 peers |
 |---|---|---|
-| One wave: miss, ticks used | 0.011, 0.13 | 0.016, 0.28 |
-| A phase per peer: miss, ticks used | 0.016, 0.33 | 0.022, 0.45 |
+| One wave: off its wave, ticks with a step | 1.1%, 13% | 1.6%, 28% |
+| A phase per peer: off its wave, ticks with a step | 1.6%, 33% | 2.2%, 45% |
 | Held-out score after two cycles (one wave, a phase per peer) | 0.622, 0.606 | 0.599, 0.594 |
 
-Four times the peers still ride, but each works harder to hold its place,
-and the table gets a little worse for text nobody holds.
-
-Timing matters less than expected. When all 128 peers decide against the
-same table before any step lands (`STALE=1`), the wave holds at a miss of
-0.020, for nearly three times the steps. An earlier version of the probe
-could not hold the wave at 128 peers at all (miss 0.1 to 0.2). It used raw
-trigram counts and let a pull carry a coordinate through zero. Both were
-changed at once, so which one mattered is not isolated. The likely one is
-the counts: common trigrams put every step partly on the same rows.
-
-One caution about clones. Peers that share a signature and differ only in the
-example they hold are one model with a larger batch. What makes them a swarm
-is that each has its own origin, and here its own phase.
-
-## The gap
-
-A wave says when to move and how far. It does not say what to learn. The
-probe makes that concrete: held on the wave by a rule with no preference, the
-table drifts and keeps nothing. Whatever is learned has to come from an
-asymmetry between what is chosen on the way up and what is chosen on the way
-down. The one asymmetry tried, by distance, feeds itself: far things are
-pushed farther until one direction holds everything.
-
-The wave does not stop that. It fixes one number per peer, the mean distance
-to its ruler, and leaves the table free to take any shape that keeps the
-number. So the wave is a pace, not a constraint on what is learned.
-
-The open rule, restated: an asymmetry in what to read that adds up across
-many directions and does not feed itself.
-
-What it is for is also open. The best candidate so far: a model whose
-provenance is complete, because it is nothing but a list of what it read.
-
-## Prior-art anchors
-
-From memory, not checked against sources.
-
-- Learning with a phase that learns and a phase that unlearns, cancelling at
-  equilibrium: Boltzmann machines, wake-sleep, contrastive Hebbian learning.
-- An oscillating teaching signal, with the update read off at the wave's own
-  frequency: Baldi and Pineda 1991; holomorphic equilibrium propagation 2022.
-  The engineering name is a lock-in amplifier.
-- Weights written as a signed list of examples: the dual form of a linear
-  model, support vectors, the perceptron's update-only-on-need.
-- Choosing the examples that steer a learner: machine teaching, active
-  learning.
-- Holding a loss at a level and not at zero: flooding (2020).
-- Strengthening what is already strong until one direction wins: Hebbian
-  learning and Oja's rule, and the decorrelating terms (Sanger's rule) that
-  were added to keep several units apart.
-
-## Cheapest next probe
-
-Two changes to the probe (crawl.mjs, in git history), each a few lines:
-
-- **A reference that does not collapse.** Until one exists, the gain to aim
-  for is unknown. Keep the columns apart while pulling same-document passages
-  together, and see what sixteen directions are worth on the held-out score.
-- **A rule whose asymmetry does not feed itself.** One candidate: each column
-  chooses its own passage, so the columns cannot all follow the same one.
-  Another: the pull uses two passages of the signature, which is the one
-  thing a peer knows goes together, and only the push reads the library.
-
-If the second reference is no better than 0.757, the table is too small to
-say anything and the test should change before the rule does.
+With every peer deciding before any step landed, the wave held at 2.0% off, with nearly three times the steps. An earlier version of the probe could not hold the wave at 128 peers at all (10% to 20% off); it used raw fragment counts and let a pull carry a tally through zero. Both were changed at once, so which one mattered was never isolated; the likely one is the counts, since common fragments put every step partly on the same rows.

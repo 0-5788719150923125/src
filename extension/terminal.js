@@ -4,29 +4,18 @@
 // - its model is the one the extension shares, and so are its radio and
 //   chat (all in host.js), so they go on when the popup closes;
 // - the popup is a new page each time it opens, so what was on the screen
-//   is kept while the browser runs, and comes back;
-// - /ghost turns the ghost text in other sites' fields (page.js) on or
-//   off, everywhere or on one site, kept in chrome.storage where every
-//   tab's page.js reads it.
-//
-//   /ghost                 what is on, and where not
-//   /ghost on | off        everywhere
-//   /ghost on | off SITE   one site (a host name, or "here": the tab the
-//                          terminal was opened over)
+//   is kept while the browser runs, and comes back.
 
 import * as chat from './js/chat.js'
-import { COMMANDS, find } from './js/commands.js'
-import { clear, print, say } from './js/print.js'
+import { find } from './js/commands.js'
+import { clear, print } from './js/print.js'
 import * as radio from './js/radio.js'
 import * as recall from './js/recall.js'
 import { state } from './js/state.js'
 import { start } from './js/terminal.js'
-import { html, t } from './js/text.js'
 import * as writer from './js/writer.js'
 
 const api = globalThis.browser ?? globalThis.chrome
-
-COMMANDS.push({ name: '/ghost', run: ghost })
 
 // A port of this name to the extension's background (host.js), or an
 // error when it is not up: in Chrome, asking opens it.
@@ -224,7 +213,7 @@ function keep() {
 
 // /reset forgets everything, the background's too: the radio, the chat
 // and the model run there, and hold what is stored while they do. So the
-// extension's own storage is cleared here, a note is left in the storage
+// kept screen is cleared here, a note is left in the storage
 // the background shares with this page (Chrome's offscreen document has no
 // chrome.storage), and the background restarts (in Chrome, background.js
 // closes it and opens it again; Firefox's reloads itself, and cannot
@@ -232,7 +221,7 @@ function keep() {
 // (host.js). Then this page reloads.
 find('/reset').run = async () => {
     keeping = false
-    await Promise.all([api.storage.local.clear(), store?.clear()])
+    await store?.clear()
     localStorage.setItem('reset', '1')
     await api.runtime
         .sendMessage({ type: 'restart' })
@@ -240,81 +229,6 @@ find('/reset').run = async () => {
             console.info('terminal: the background went:', err.message)
         )
     location.reload()
-}
-
-// ------------------------------------------------------------ /ghost
-
-const load = async () => {
-    const { ghost: stored } = await api.storage.local.get('ghost')
-    return { on: stored?.on !== false, sites: { ...(stored?.sites || {}) } }
-}
-
-// The host name of the tab the terminal opened over, or null: the popup
-// may see it (activeTab), the side panel may not.
-async function here() {
-    try {
-        const [tab] = await api.tabs.query({
-            active: true,
-            lastFocusedWindow: true
-        })
-        const url = tab?.url && new URL(tab.url)
-        return url && /^https?:$/.test(url.protocol) ? url.hostname : null
-    } catch {
-        return null
-    }
-}
-
-// "example.com", "https://example.com/page" or "here", as a host name.
-async function siteOf(word) {
-    if (word.toLowerCase() === 'here') return here()
-    try {
-        return (
-            new URL(word.includes('://') ? word : `https://${word}`).hostname ||
-            null
-        )
-    } catch {
-        return null
-    }
-}
-
-const everywhere = (on) =>
-    on ? html('ghost.on-everywhere') : html('ghost.off-everywhere')
-const atSite = (on, site) =>
-    on ? html('ghost.on-site', { site }) : html('ghost.off-site', { site })
-
-function status({ on, sites }) {
-    say(everywhere(on))
-    // The sites set apart from the rule.
-    const apart = Object.keys(sites)
-        .filter((site) => sites[site] !== on)
-        .sort()
-        .join(', ')
-    if (apart)
-        say(
-            on
-                ? t('ghost.exceptions-off', { sites: apart })
-                : t('ghost.exceptions-on', { sites: apart })
-        )
-}
-
-async function ghost([word, where]) {
-    const settings = await load()
-    const value = { on: true, off: false }[word?.toLowerCase()]
-    if (value === undefined) {
-        status(settings)
-        return say(html('ghost.usage'))
-    }
-    if (!where) {
-        // Everywhere, starting over: the sites set apart before are not.
-        await api.storage.local.set({ ghost: { on: value, sites: {} } })
-        return say(everywhere(value))
-    }
-    const site = await siteOf(where)
-    if (!site) return say(html('ghost.unknown-site'))
-    if (value === settings.on) delete settings.sites[site]
-    else settings.sites[site] = value
-    await api.storage.local.set({ ghost: settings })
-    say(atSite(value, site))
 }
 
 // ------------------------------------------------------------ start

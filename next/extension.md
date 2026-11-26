@@ -1,193 +1,111 @@
-# Extension: the terminal in the browser, ghost text on every page
+# The Extension
 
-> Status: **phases 1 and 2 built** (2026-11-25; written as an idea on
-> 2026-11-21, after ghost text shipped on the site). The terminal opens
-> from the toolbar button and in the side panel; ghost text works in plain
-> inputs, textareas and contenteditable editors on any site. See "What was
-> built" at the end; the rest of this note is the plan as it was.
+*On taking the terminal along, and writing ahead of you everywhere.*
 
-## The one line
+> Status: built (2026-11-25/26) for Chrome and Firefox, tried by the user in Firefox, not yet reviewed or sent to the stores. First written as an idea on 2026-11-21.
 
-Package src as a browser extension: the terminal in a side panel, the
-radio and chat in the background, and the ghost text offered in any
-text field on any page.
+---
 
-## Why
+## A Place You Visit
 
-- **Writing everywhere.** Ghost text works in the site's command line. An
-  extension could offer the same in any input on any page: start typing,
-  the writer writes ahead, Tab keeps it.
-- **Seeding that outlives the tab.** A browser stays open far longer than
-  a tab. Songs a listener holds would keep seeding to others for as long
-  as the browser runs, which is what the swarm needs.
+The site is a place you visit. You open a tab, chat a while, listen to the radio, and close it. When the tab closes, everything stops: the songs you held stop reaching other listeners, the chat goes on without you, and the model that writes ahead of you is gone until next time.
 
-## Shape
+A browser stays open far longer than a tab, and an extension lives as long as the browser does. That gives two reasons to build one.
 
-- **One model per browser, not per tab.** The model (137 MB, up to 4
-  threads), the WebTorrent client, chat and radio live in the extension's
-  background. Content scripts on pages only draw the ghost and ask the
-  background for guesses. A model per tab would be unusable.
-- **Chrome and Firefox differ here.**
-  - Chrome (Manifest V3): the background is a service worker, which has
-    no Workers, no WebRTC and no audio. Those need an offscreen document
-    (`chrome.offscreen`), and Chrome allows one per extension. An
-    offscreen document opened for audio is closed after about 30 s of
-    silence; how long one opened for WebRTC or Workers lives is untested.
-  - Firefox: no offscreen documents, but a background page has a DOM and
-    can do all of it. `../ext` used Manifest V2 there with a persistent
-    background page; check whether that is still accepted, or what
-    Manifest V3's non-persistent background does to WebRTC connections.
-- **The terminal in a side panel**, not a popup: popups close as soon as
-  focus leaves them. Chrome has `sidePanel`; Firefox has `sidebar_action`.
-  Closing the panel would not stop the radio or chat.
-- **One code base.** The site stays the source of truth; the extension is a
-  second build target in `scripts/build.js` (manifests per browser, as in
-  `../ext/public/manifest.*.json`), not a fork.
+**Writing everywhere.** On the site, the ghost text works in the command line: you type, a small model on your device guesses the rest, and Tab keeps it. An extension can offer the same in any text field on any page: a comment box, a chat, an email, a form.
 
-## What `../ext` already worked out
+**Sharing that outlives the tab.** The radio's songs come from other listeners. A browser that keeps sharing all day helps the swarm far more than a tab that stays open for one song.
 
-`../ext` ("Domino", 2024) shipped to both stores:
+---
 
-- Chrome on Manifest V3 (service worker plus the `offscreen` permission),
-  Firefox on Manifest V2 (background scripts), from one webpack build with
-  a manifest per browser.
-- transformers.js bundled into the extension; CSP with `'wasm-unsafe-eval'`.
-- `package.sh` zips the source next to each browser's build, for Firefox's
-  reviewers.
-- History worth reading before submitting again: "try to submit chrome
-  extension again, still using remote onnx" and "update mozilla listing,
-  trying to avoid delisting". Both stores ban remotely hosted code, so
-  transformers.js and ONNX Runtime's WASM files must ship inside the
-  extension (the site loads them from jsdelivr today). Model weights are
-  data rather than code and are normally allowed from Hugging Face, but
-  `../ext` chose to bundle its models (git LFS) to be safe.
+## One Mind per Browser
 
-## The hard parts
+The model is 137 MB, and takes up to four of the processor's threads while it writes. One copy per tab would be unusable: ten tabs, ten models. So there is one per browser, in the extension's *background*: a page with no window, which runs for as long as the browser does. Web pages only draw the ghost, and ask the background for guesses. One guess runs at a time; a new one, from any tab, stops the last, so the field you are typing in always wins.
 
-1. **Ghost text on other people's pages is a long tail.**
-   - Plain `<input>` and `<textarea>`: workable. Textareas wrap, so the
-     caret's position comes from a mirror element with the same styles.
-   - Rich editors (Gmail, Slack, Discord, Notion) are contenteditable trees,
-     each with its own rules.
-   - Framework-controlled fields (React and the like) ignore a plain
-     `value` change; accepting text needs the native setter and an `input`
-     event.
-   - Some sites use Tab themselves.
-   - Canvas editors (Google Docs) draw their text; there is no DOM text to
-     read. See below.
-2. **The model is small for arbitrary writing.** SmolLM2-135M writes
-   chat-sized lines well; in an email or a form its guesses will be generic.
-   On a random page the context is the field's own text (maybe the page's
-   title), not a room's conversation. SmolLM2-360M would help and runs
-   about 3x slower.
-3. **Privacy and review.** A content script that watches typing on every
-   site brings the "read and change all your data on all websites" warning.
-   It must never touch password fields or payment fields
-   (`autocomplete="cc-*"`), should be off by default per site, and must say
-   plainly that nothing leaves the device.
-4. **Radio in the background.**
-   - Streaming relies on WebTorrent's service worker (`sw.js`); in Chrome
-     the extension's own service worker would have to play that part.
-   - Storage is per origin: songs the site already holds do not carry over,
-     so the extension starts empty.
-   - Seeding all day uses upload bandwidth and shows the listener's IP
-     address to peers. Opt-in, and visible (a toolbar badge).
+The background holds everything else, too: the radio, the chat, and the swarm's memory. The terminal (the toolbar button's popup, or the browser's side panel) is only a window onto it. Close the popup, and the radio plays on, the chat keeps listening, and what was said meanwhile is waiting when you open it again. Everything starts with the browser, from the very first run, before anyone opens the terminal.
 
-## Canvas editors: reading pixels
+Chrome and Firefox make this differently, and finding out how took some digging.
 
-Google Docs renders its text to a canvas, so a content script cannot read
-what is written. The user's idea: read the pixels and extract the text,
-with a vision model. Options, cheapest first:
+- **Chrome**'s current extensions get a *service worker* as their background: something that wakes for events and sleeps in between, and cannot play audio, connect to peers, or run the model. Those live in an *offscreen document*, a hidden page, of which Chrome allows one per extension. Chrome closes one opened only for audio after 30 seconds of silence, but keeps one opened to run workers until it is closed, so ours asks for all three: workers, audio, and peer connections.
+- **Firefox**'s current kind of background is unloaded after 30 seconds without an extension event, open connections or not, which would restart the model after every pause in typing. So the Firefox build uses the previous kind of extension, whose background page stays put. Firefox still accepts it, with no end announced.
 
-- **A text layer Google provides.** When Docs moved to canvas rendering
-  (2021), Google said extensions could be allowlisted for an "annotated
-  canvas" that keeps text in the DOM, and Docs has a screen reader mode.
-  Check whether either still exists and is open to us; if so, no pixels.
-- **OCR.** Document text is clean, rendered type: classic OCR
-  (Tesseract.js, in WASM) reads it well and is far lighter than a vision
-  language model. Only the paragraph around the caret matters.
-- **A small vision language model** (SmolVLM-256M or Florence-2's OCR task
-  through transformers.js): heavier (hundreds of MB, seconds per image on
-  the CPU), but copes with layout, tables and odd fonts.
+`/reset` has to reach the background too, or the radio plays on through it. So the terminal leaves a note, and the background is restarted (Chrome closes the hidden page and opens a new one; Firefox's reloads itself). The new background finds the note and forgets everything before it starts anything.
 
-Whatever reads the text, it should not run on every keystroke: read once
-when the visitor pauses or moves the caret, then track what they type from
-key events until the next read. Pixels can come from
-`chrome.tabs.captureVisibleTab` (rate-limited to a couple of calls a
-second) or from the Docs canvas itself, if the content script can read it.
-Docs' caret is still a DOM element, so the ghost can be placed. Accepting
-text means typing into Docs' hidden text-event iframe, which is how other
-extensions insert text there. All of this is unverified.
+---
 
-## Phases
+## Ghost Text on Other People's Pages
 
-1. **The terminal in a side panel, radio and chat in the background.**
-   Mostly the site as it is, and the seeding benefit at once. No access to
-   other sites, so the easier review.
-2. **Ghost text on plain inputs and textareas,** opt-in per site, skipping
-   password and payment fields.
-3. **Rich editors**, one at a time, by demand.
-4. **Canvas editors**, through a text layer if one exists, else OCR.
+Writing into somebody else's page is a long tail of special cases.
 
-## Open questions
+A plain text box is workable, except for one thing: the ghost has to appear exactly where the caret is, and a text box will not say where that is. So the extension keeps an invisible copy of the text before the caret, laid out exactly like the field (same font, same width, same wrapping, same scrolling), and draws the ghost where the copy ends. Rich editors (Gmail, Slack, Discord, Notion) are trees of formatted text instead; there, the caret's own position can be read, and the ghost wraps within the editor.
 
-- Does Firefox still accept a Manifest V2 background page, and if not,
-  does a Manifest V3 background keep WebRTC connections alive?
-  **Answered:** it does (no deprecation announced as of 2026-11). Its V3
-  background is an event page unloaded after 30 s without an extension
-  event; an open port does not hold it, nor does a Worker or WebRTC. So
-  Firefox gets V2 with a persistent background (the model would otherwise
-  start again after every pause in typing).
-- How long does Chrome keep an offscreen document for WebRTC or Workers?
-  **Answered:** until closed (or the extension reloads): only
-  AUDIO_PLAYBACK has a lifetime (30 s of silence), and only when it is the
-  sole reason (Chromium's lifetime enforcers).
-- Is ONNX Runtime's Firefox thread hang (CLAUDE.md) the same in an
-  extension's background page? **Moot for now:** Firefox gives extension
-  pages no cross-origin isolation (bug 1673477), so the model runs on one
-  thread there, where the hang never happened. The watchdog is kept.
-- Can one tab's guess requests starve another's? (One model, many tabs: the
-  focused field should win.) **As built:** one guess at a time; a new one,
-  from any tab, stops the last, so the field being typed in wins.
+The ghost is drawn in a sealed-off layer of its own, above everything on the page, dialogs included, so the page's styles cannot reach it and it cannot disturb the page. Accepted words go in the way typing does, so the frameworks that run many pages (React and the like) notice the change, and undo works.
 
-## What was built (2026-11-25)
+Tab is the hard key: many pages use it to move between fields, and some to indent. The extension takes Tab only while a guess is showing. Escape dismisses the guess, and then Tab belongs to the page again.
 
-- `scripts/extension.js` builds `build/extension/{chromium,firefox}/`
-  and their zips from the site's deploy build plus `extension/`, as
-  planned: a second target, not a fork. The popup and side panel are the
-  site's `index.html` with `extension/terminal.js` added (`/ghost`).
-- The model: `extension/host.js` runs the site's `writer.worker.js` once
-  per browser (Chrome: offscreen document, opened by `background.js` on
-  the first page that asks; Firefox: the background page). Pages' guesses
-  carry their own `preface` (the page's title and host) instead of the
-  chat, and no swarm memory: questions would show the chat what is typed
-  elsewhere. The terminal uses the same model, over a port that carries
-  the worker's own messages (`writer.useWorker`), with its chat and memory
-  as on the site.
-- The ghost: `extension/page.js`, a content script in every frame, from
-  document start. A closed shadow root in a popover (the top layer) draws
-  the guess over the field: for inputs and textareas, after an unseen copy
-  of the text laid out like the field's (so wrapping and scrolling match);
-  for contenteditable, from the caret's own box, wrapping within the
-  editor. Accepted words go in with `execCommand('insertText')`.
-- The radio plays in the background (added the same day, after the
-  user's first try: it stopped when the popup closed): `host.js` runs the
-  site's `radio.js` (Chrome's offscreen document gained the AUDIO_PLAYBACK
-  and WEB_RTC reasons; WORKERS keeps it open through silence), and the
-  terminal hands it `/radio` and prints what it says (`playElsewhere` in
-  `radio.js`, `printElsewhere` in `print.js`). The stations are joined
-  when a terminal first opens, then shared while the background runs.
-  Extension pages cannot register a service worker, so the radio plays
-  over HTTP (the mirror), as the site does without one. Chat still lives
-  in the terminal: it is as alive as the popup (the side panel stays
-  open).
-- The popup is a new page each time it opens, so `terminal.js` (now the
-  page's entry, in place of `js/main.js`) keeps the screen's lines and the
-  chat in `storage.session`, and puts them back under the new banner;
-  lines the radio said while it was closed follow.
-- Vendored: transformers.js and ONNX Runtime's CPU-only build (its
-  default glue calls `new Function`), fetched at build time and pinned by
-  hash; WebTorrent as published. Weights from Hugging Face, as on the
-  site.
-- Not done: rich editors' own quirks beyond what execCommand covers,
-  canvas editors (phase 4), background chat, Edge's store.
+Some fields must never get a ghost: passwords, card numbers, addresses and other personal details, search boxes, code editors, right-to-left text, fields too small to see, and any field with text after the caret. A site can also opt a field out (`data-src-ghost="off"`); the site's own command line does, since it has its own ghost.
+
+---
+
+## Privacy and Review
+
+An extension that watches typing on every site comes with the browser's warning that it can "read and change all your data on all websites", and rightly. So the rules are strict, and the store listing states them plainly.
+
+- **The model runs inside the extension**, on your own processor. What you type in other sites' fields goes to it.
+- **Nothing typed there goes anywhere readable.** Guesses on other sites never ask the chat, since a question there would show the chat what you are typing elsewhere. They ask the swarm's memory only with sealed questions, which the answerers cannot read ([private-memory.md](private-memory.md)). Nothing typed on other sites is ever stored.
+- **Everything that runs ships inside the extension.** Both stores ban code loaded from elsewhere, so the language-model library and its runtime are fetched when the extension is built, checked against fixed fingerprints, and shipped byte for byte as npm publishes them, so reviewers can compare. Only the model's weights, which are data, download from Hugging Face, once.
+
+Most of this was learned from `../ext`, an earlier extension that shipped to both stores: one build with a description file per browser, the source zipped for Firefox's reviewers, and a history of rejections over code loaded from a CDN.
+
+---
+
+## Canvas Editors
+
+Google Docs draws its text as pixels on a canvas, so there is no text on the page to read. The user's idea: read the pixels. The options, cheapest first:
+
+- **A text layer from Google.** When Docs moved to the canvas in 2021, Google said extensions could be allowed an "annotated canvas" that keeps the text in the page, and Docs has a screen-reader mode. If either is open to us, no pixels are needed at all.
+- **Ordinary text recognition** (Tesseract, in the browser). Document text is clean, rendered type, which it reads well, far more cheaply than a vision model. Only the paragraph around the caret matters.
+- **A small vision model.** Hundreds of megabytes and seconds per image, but it copes with tables and odd fonts.
+
+Whatever reads the text should read it when you pause or move the caret, not on every key, and follow your typing in between. Docs' caret is still an element on the page, so the ghost can be placed, and other extensions insert text through Docs' hidden typing frame. All of this is unverified.
+
+---
+
+## Where It Stands
+
+The plan had four phases. The first two are built, and more besides.
+
+1. **The terminal, with the radio and the chat in the background.** Built. The popup, Chrome's side panel and Firefox's sidebar are the site itself.
+2. **Ghost text in text boxes**, never in sensitive fields. Built, along with rich editors as far as typing into them goes. Checked on a Gmail-like editor, React's text boxes, frames, dialogs, and, by the user, on Pastebin.
+3. **Rich editors' own quirks**, one at a time, as they come up. Not started.
+4. **Canvas editors.** Not started.
+
+Also not done:
+
+- **The stores.** The user makes the first Chrome Web Store upload and listing by hand, and publishes; after that, `node main.js --publish` uploads new versions, asking first.
+- **Edge.**
+- **The toolbar badge**, and the side panel and sidebar as real panels (they were checked as pages).
+- **Chat in Firefox's background**, untested.
+- **Real sites** beyond Pastebin.
+
+---
+
+## The Numbers
+
+- The model, SmolLM2-135M-Instruct: 137 MB, downloaded once. On a fresh browser profile, the first ghost showed 16 seconds after typing began. The terminal's ghost uses the background's model: ready in 0.13 s when warm, 2.9 s cold.
+- Firefox gives extension pages no cross-origin isolation (bug 1673477), so the model runs on one thread there; in Chrome, on up to four.
+- The background lets the model go after 30 minutes without a guess; the weights stay cached.
+- Shipped inside: transformers.js 4.3.2, ONNX Runtime Web 1.31.0-dev (its CPU-only build, since the default one calls `new Function`, which Chrome's extension rules forbid), and WebTorrent 3.0.21.
+- Chrome: Manifest V3, an offscreen document with the reasons WORKERS, AUDIO_PLAYBACK and WEB_RTC. Firefox: Manifest V2, a persistent background page, version 140 or later.
+
+---
+
+## Where It Lives
+
+- `scripts/extension.js`: the build, a second target of the site's rather than a fork (`node main.js --extension`).
+- `scripts/stores.js`: uploads to the stores (`--publish`).
+- `extension/background.js`: Chrome's service worker, which opens the background and restarts it.
+- `extension/host.js`: the background itself: the model, the radio, the chat, the memory.
+- `extension/terminal.js`: the terminal's window onto it.
+- `extension/page.js`: the ghost on other sites.
+- `src/text/en/extension.md`: the store listing, and the notes for reviewers.

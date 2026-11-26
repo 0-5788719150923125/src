@@ -2,7 +2,7 @@
 
 *On asking a crowd for help without telling it what you asked.*
 
-> Status: built and tested on this machine, in Chrome and Firefox, but not yet deployed. A work in progress.
+> Status: built, and live on the library servers, which redeploy from source every 30 minutes. The extension that asks is not in the stores yet. A work in progress.
 
 ---
 
@@ -126,7 +126,7 @@ The shelves cost a little accuracy. When someone types text the memory holds, th
 
 Not done yet:
 
-- **Deploying the servers' part.** Their image needs rebuilding. Each server makes its own key the first time it starts; listing those keys when building the extension lets it count the project's servers above strangers. Browsers answer without any of it.
+- **Pinning the servers' keys.** Each server made its own key the first time it started, and logs the public half. Listing those keys when building the extension (`SRC_PINNED_KEYS`) lets it count the project's servers above strangers; until then, the servers count like anyone else. Browsers answer either way.
 - **Checking the safety margins.** The size of the puzzle (how many secret numbers, how much error) follows a published choice made to withstand the best known attacks. It should be confirmed with the standard tool for that before anything sensitive relies on it, along with whether the shared public numbers should be renewed from time to time.
 - **Remembering hints between sessions.** Each new browser session downloads each answerer's hint again.
 - **A switch.** There is no way yet to turn the memory off while keeping the ghost.
