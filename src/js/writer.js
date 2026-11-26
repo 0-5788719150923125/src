@@ -90,9 +90,9 @@ let makeWorker = () =>
     })
 export const useWorker = (make) => (makeWorker = make)
 
-// `welcome`: the text entry said once the model can guess (the browser
-// extension has its own).
-export function load(welcome = null) {
+// `welcome`: whether the line is said once the model can guess (the
+// browser extension's background says its own, once).
+export function load(welcome = true) {
     if (worker) return
     // Shown at once: the worker and its library take a moment to start
     // before they can say how the download is going.
@@ -102,9 +102,8 @@ export function load(welcome = null) {
     // shows the download. A touchscreen has no Tab key; there, the ghost is
     // taken by a tap.
     const touch = matchMedia('(pointer: coarse)').matches
-    whenReady.then(() =>
-        say(welcome ? t(welcome) : touch ? t('pen.info-touch') : t('pen.info'))
-    )
+    if (welcome)
+        whenReady.then(() => say(touch ? t('pen.info-touch') : t('pen.info')))
 }
 
 function start(threads = 0) {

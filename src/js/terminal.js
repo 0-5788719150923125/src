@@ -144,8 +144,9 @@ const ATOM = `
     <div class="orbit"><div class="electron"></div></div>
 </div>`
 
-// `welcome`: the line said once the model is ready, if not the site's.
-export async function start({ welcome = null } = {}) {
+// `welcome`: whether to say the welcome line once the model is ready (the
+// browser extension's background says its own).
+export async function start({ welcome = true } = {}) {
     await load()
     head.textContent = handle({ ...SPEAKERS.pen, symbol: '=' })
     showPrompt(you())

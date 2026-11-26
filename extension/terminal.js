@@ -108,8 +108,8 @@ function background() {
         if (line) print(line.speaker, line.body, line.options)
         if (cleared) clear()
         if (memory) {
-            if (memory.done) asking.delete(memory.id)
             asking.get(memory.id)?.(memory.memory, memory.done)
+            if (memory.done) asking.delete(memory.id)
         }
         for (const [key, value] of Object.entries(ticker ?? {})) {
             if (value) state.set(key, value)
@@ -168,9 +168,8 @@ background()
 // ------------------------------------------------------------ the screen
 
 // Kept in storage.session (in memory, until the browser closes): the lines
-// on the screen, and the chat. Each opening prints its own banner and
-// welcome lines, so those are left out, and the rest goes back under the
-// banner.
+// on the screen. Each opening prints its own banner, so that is left out,
+// and the rest goes back under it.
 const SCREEN = 'screen'
 const store = api.storage.session
 const output = document.querySelector('#container output')
@@ -204,17 +203,13 @@ function show(kept) {
 
 function keep() {
     if (!store) return
-    const welcome = t('ghost.info')
-    const isOwn = (line) =>
-        isBanner(line) ||
-        line.querySelector(':scope > .text')?.textContent === welcome
     let pending = null
     const save = () => {
         clearTimeout(pending)
         pending = null
         if (!keeping) return
         const lines = [...output.children]
-            .filter((line) => !isOwn(line))
+            .filter((line) => !isBanner(line))
             .map((line) => line.outerHTML)
         store
             .set({ [SCREEN]: { lines } })
@@ -317,9 +312,10 @@ async function ghost([word, where]) {
 
 // ------------------------------------------------------------ start
 
-// The site's terminal, with the extension's welcome line, then the kept
-// lines under its banner.
+// The site's terminal, without its welcome line (the background says the
+// extension's, once, as the model first comes ready, and it is kept with
+// the rest), then the kept lines under its banner.
 const kept = store ? await keptScreen() : null
-await start({ welcome: 'ghost.info' })
+await start({ welcome: false })
 show(kept)
 keep()

@@ -40,7 +40,7 @@
 import * as answering from './js/answering.js'
 import * as chat from './js/chat.js'
 import { config } from './js/config.js'
-import { printElsewhere } from './js/print.js'
+import { printElsewhere, say } from './js/print.js'
 import { createAsker } from './js/private.js'
 import { radio, restore } from './js/radio.js'
 import * as recall from './js/recall.js'
@@ -179,18 +179,10 @@ function stopFor(port) {
 // ------------------------------------------------------------ pages
 
 // The swarm's memory, asked privately, and answered from what the
-// terminal kept of the chat: joined when a page or terminal first
-// connects. Cautious: continuations with numbers, links or addresses only
-// where two peers agree.
+// terminal kept of the chat. Cautious: continuations with numbers, links
+// or addresses only where two peers agree.
 let asker = null
 let answerer = null
-
-function joinMemory() {
-    if (asker) return
-    asker = createAsker({ pinned: config.pinned ?? [], cautious: true })
-    answerer = answering.answerer()
-    answering.join({ asker, answerer })
-}
 
 function pageGuess(port, { id, line, title, site }) {
     if (typeof line !== 'string' || !line.trim()) return
@@ -268,13 +260,12 @@ function onTerminal(port, message) {
 // { clear } as the radio and the chat print, { memory: { id, memory, done } },
 // and the ticker's part kept here ({ state }). What is printed while no
 // terminal is open (the next song, the chat) waits for the next one. Both
-// start when a terminal first opens, and then stay: the stations shared
+// start with this page (see start, below), and stay: the stations shared
 // and the chat joined, as an open tab of the site does.
 const screens = new Set()
 const MISSED = 200
 const CHAT = 'chat' // localStorage: the chat this background was in
 let missed = []
-let started = false
 let shown = null
 let kept = null // the chat as last saved
 
@@ -341,16 +332,6 @@ function showTicker() {
 }
 
 function onScreenOpen(port) {
-    if (!started) {
-        started = true
-        restore()
-        // Back in the chat it was in (chat.js reads it from the address).
-        kept = localStorage.getItem(CHAT)
-        if (kept)
-            history.replaceState(null, '', `?chat=${encodeURIComponent(kept)}`)
-        chat.connect()
-        setInterval(showTicker, 1000)
-    }
     for (const message of missed) port.postMessage(message)
     missed = []
     port.postMessage({ state: ticker() })
@@ -367,6 +348,30 @@ function onScreen(port, { command, line, name, id, context } = {}) {
         )
 }
 
+// ------------------------------------------------------------ start
+
+// Everything starts with this page, with the browser or as the extension
+// is installed (in Chrome, background.js opens it then), not with the
+// popup: the chat receives, the stations are shared, the private memory
+// asks and answers, and the model comes up (it is let go after IDLE
+// without a guess); the welcome line and whatever is said wait for the
+// first terminal.
+texts.then(() => {
+    // The welcome line first, at the top of the terminal's history.
+    say(t('ghost.info'))
+    // Back in the chat it was in (chat.js reads it from the address).
+    kept = localStorage.getItem(CHAT)
+    if (kept)
+        history.replaceState(null, '', `?chat=${encodeURIComponent(kept)}`)
+    chat.connect()
+    restore()
+    asker = createAsker({ pinned: config.pinned ?? [], cautious: true })
+    answerer = answering.answerer()
+    answering.join({ asker, answerer })
+    rest()
+    setInterval(showTicker, 500)
+})
+
 // ------------------------------------------------------------ ports
 
 const KINDS = {
@@ -380,7 +385,6 @@ api.runtime.onConnect.addListener((port) => {
     if (!kind) return
     texts.then(() => {
         kind.ports.add(port)
-        joinMemory()
         if (kind.ports === screens) return onScreenOpen(port)
         rest()
         if (ready) port.postMessage({ ready: true })

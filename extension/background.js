@@ -1,8 +1,8 @@
 // The extension's background in Chrome: a service worker, which can run
 // neither a Worker, WebRTC nor audio, so it only opens the offscreen
-// document where the model and the radio live (host.html) when a page
-// first asks for it, and shows on the toolbar button what that document
-// tells it (the model's download). Chrome allows one offscreen document,
+// document where the model, the radio and the chat live (host.html), with
+// the browser, at install, or when a page asks for it, and shows on the
+// toolbar button what that document tells it (the model's download). Chrome allows one offscreen document,
 // and keeps it open until the browser closes (or the extension reloads):
 // it would close one opened for audio alone after 30 s of silence, but not
 // while another of its reasons holds (WORKERS). Firefox has no service
@@ -31,6 +31,18 @@ async function openHost() {
         .finally(() => (opening = null))
     await opening
 }
+
+// The host starts with the browser, and as the extension is installed or
+// updated, so the chat and the radio run before anyone opens the popup:
+// whenever this worker starts (with the browser here; the events wake it
+// where it would not be started otherwise), it opens the host if closed.
+const open = () =>
+    openHost().catch((err) =>
+        console.warn('background: could not open the host:', err.message || err)
+    )
+chrome.runtime.onStartup.addListener(open)
+chrome.runtime.onInstalled.addListener(open)
+open()
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message?.type === 'host') {
