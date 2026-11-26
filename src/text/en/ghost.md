@@ -6,7 +6,7 @@ typed in a field, never printed. -->
 
 # info
 
-PEN@ROOT also writes ahead of you in other sites' text fields, here in this browser: nothing typed there leaves your device. Tab keeps a word, or hold it to keep them all; Escape hides the guess. Never in password, payment or address fields.
+PEN@ROOT also writes ahead of you in other sites' text fields, here in this browser. What you type there is never sent anywhere readable: it asks the swarm's memory with an encrypted question that no peer can read. Tab keeps a word, or hold it to keep them all; Escape hides the guess. Never in password, payment or address fields.
 
 # usage
 

@@ -163,7 +163,9 @@ export function manifest(browser, { version, site = SITE, geckoId = GECKO_ID } =
                     // messages go to the other people in the chat, which
                     // Mozilla counts as personal communications, whoever
                     // sends them. What is typed in other sites' fields
-                    // never leaves the browser.
+                    // leaves only as encrypted queries that no one can
+                    // read (src/js/private.js); whether Mozilla counts
+                    // that is an open question (next/private-memory.md).
                     data_collection_permissions: { required: ['personalCommunications'] }
                 }
             }

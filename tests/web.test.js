@@ -172,6 +172,10 @@ test('the build reads stations and the environment', async () => {
     const live = siteConfig(stations, { SRC_SEED_URL: 'https://seed.src.eco/', SRC_TRACKER_URL: 'wss://tracker.src.eco' })
     assert.equal(live.seed, 'https://seed.src.eco')
     assert.equal(live.trackers[0], 'wss://tracker.src.eco')
+    // Pinned keys: Ed25519 public keys, base64url; anything else is left out.
+    assert.deepEqual(plain.pinned, [])
+    const key = 'uqTCm0ZfX0eJk2SR8bWbr0d6Dz8sJPkqVeXIunc4h3g'
+    assert.deepEqual(siteConfig(stations, { SRC_PINNED_KEYS: ` ${key}, not-a-key ,` }).pinned, [key])
 })
 
 test('the stack is optional, and deploys keep local addresses out', async () => {

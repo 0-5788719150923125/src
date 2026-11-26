@@ -17,7 +17,8 @@
 // would be drawn over it). /ghost in the terminal turns it off everywhere
 // or on one site (chrome.storage).
 //
-// What is typed goes to the extension's own model and nowhere else. The
+// What is typed goes to the extension's own model (host.js), which asks
+// the swarm's memory about it only as an encrypted question. The
 // guess is drawn in a closed shadow root on top of the page, so the page's
 // styles cannot reach it and its scripts cannot read it; it takes no
 // clicks. Accepted words go in with execCommand('insertText'), which the
@@ -243,6 +244,7 @@ import { ahead } from '../src/js/predict.js'
     let watchdog = null
     let retries = 0
     let next = 0
+    let started = null // the text before the last word start told to the host
     const starts = new WeakMap() // field -> where in its text the model starts reading
 
     const wanted = (text) => /\S/.test(text)
@@ -301,6 +303,12 @@ import { ahead } from '../src/js/predict.js'
         if (before === last && !again) return draw()
         if (before !== last) retries = 0
         last = before
+        // A word starts: what the swarm's memory holds for it can be fetched
+        // while it is typed (host.js), so the guesses within it need not wait.
+        if (ready && state?.atEnd && before !== started && /\s$/.test(before)) {
+            started = before
+            send({ prefetch: { line: before.slice(startOf(field.el, before)) } })
+        }
         const rest = shown(state)
         if (rest === null) drop()
         // Guess anew once the typing pauses, unless the guess still has

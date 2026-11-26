@@ -1,12 +1,14 @@
-# Only the stack's Node image is built here; send it nothing else.
-*
-!containers/node/package.json
-!containers/node/package-lock.json
-!containers/node/seed.js
-!containers/node/tracker.js
-!containers/node/webseed.js
-!containers/node/peers.js
-!containers/node/sources.js
-!containers/node/webrtc.js
-!src/js/room.js
-!src/js/memory.js
+# The stack's image takes the repository, but for secrets, history, local
+# notes outside git, and what is built, downloaded or installed here (the
+# image installs its own).
+.env
+.env.*
+CLAUDE.md
+.claude/
+.git
+build/
+data/
+state/
+**/node_modules
+.wrangler/
+**/__pycache__

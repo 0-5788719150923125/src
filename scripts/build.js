@@ -76,8 +76,18 @@ export function siteConfig(stations, env = process.env, { deploy = false } = {})
     }
     let mirror = mirrorUrl(env)
     if (deploy && isLocal(mirror)) mirror = ''
-    return { seed, trackers, mirror, stations }
+    return { seed, trackers, mirror, stations, pinned: pinnedKeys(env) }
 }
+
+// The public keys of the library peers whose private answers the browser
+// extension's page fields take (SRC_PINNED_KEYS, comma-separated; each
+// peer logs its own at start). None: any peer that answers privately
+// (src/js/private.js).
+export const pinnedKeys = (env = process.env) =>
+    (env.SRC_PINNED_KEYS || '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter((key) => /^[A-Za-z0-9_-]{43}$/.test(key))
 
 // The radio's mirror (scripts/mirror.js), where browsers fall back to when
 // no peer has a song: SRC_MIRROR_URL, else the R2 domain the deploy fills.

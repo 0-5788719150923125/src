@@ -94,9 +94,7 @@ or run them in the stack: PEERS=${args.peers} PEER_DATA=${args.data} docker comp
         PEER_DATA: ['tinystories', 'quijote', 'git'].includes(args.data) ? args.data : path.resolve(args.data),
         PEER_CHATS: args.chat,
         TRACKERS: trackerList().join(','),
-        DATA_DIR: path.join(ROOT, 'data', 'peers'),
-        ROOM_JS: path.join(ROOT, 'src', 'js', 'room.js'),
-        MEMORY_JS: path.join(ROOT, 'src', 'js', 'memory.js')
+        DATA_DIR: path.join(ROOT, 'data', 'peers')
     }
     const child = spawn(process.execPath, ['peers.js'], { cwd: dir, env, stdio: 'inherit' })
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))

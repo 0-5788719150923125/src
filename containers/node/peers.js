@@ -6,6 +6,14 @@
 // all of its slices as one, and joins the chats in PEER_CHATS through the
 // trackers. They never chat; they only remember.
 //
+// Each also answers privately (PEER_PRIVATE, on by default; private.js):
+// in a swarm of its own, from a table of its text made for private
+// retrieval, so the browser extension can ask about what is typed in other
+// sites' fields without the peer learning it. With PEER_KEY it proves a key
+// to askers, and the extension, built with that key in SRC_PINNED_KEYS,
+// counts such peers above the rest; browsers answer too, so none is needed
+// (next/private-memory.md).
+//
 // Two uses: the stack's `library` service (compose profile `public`), whose
 // text is the prose and code of git repositories (PEER_DATA=git,
 // PEER_SOURCES; sources.js), refreshed every PEER_REFRESH hours; and test
@@ -25,6 +33,13 @@
 //   PEER_REFRESH  for git: hours between refreshes (6; 0: never)
 //   PEER_DROP     share of questions left unanswered, to test a flaky chat
 //   PEER_DELAY    most ms an answer is held back, at random (0)
+//   PEER_PRIVATE  answer private questions too (1; 0: not)
+//   PEER_PRIVATE_GROUPS  the private table's size, in groups of 16,384
+//                 records of 256 bytes (4 for git, 16 MiB, about 900,000 characters
+//                 held well; 1 for test data; an asker downloads 1.3 MB a group, once)
+//   PEER_KEY      a secret: the key this peer proves to private askers
+//                 (its public key is logged at start, for SRC_PINNED_KEYS);
+//                 with several peers, each adds its number
 //   TRACKERS      comma-separated trackers to announce to
 //   WEBRTC_PORTS  a UDP range, or one port, on a public server (webrtc.js)
 //   DATA_DIR      where downloads and clones are kept (./data)
@@ -33,13 +48,15 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
 import WebTorrent from 'webtorrent'
+import { keysFor } from '../../src/js/crypto.js'
+import { combine, index, lookup, memoryExtension, sendMemory } from '../../src/js/memory.js'
+import { createAnswerer, privateExtension, swarmFile } from '../../src/js/private.js'
+import { roomFile } from '../../src/js/room.js'
 import { describePorts, webrtc } from './webrtc.js'
 
 // Many clients in one process share sockets; the default warns at ten.
 EventEmitter.defaultMaxListeners = 100
 
-const { roomFile } = await import(process.env.ROOM_JS || './room.js')
-const { combine, index, lookup, memoryExtension, sendMemory } = await import(process.env.MEMORY_JS || './memory.js')
 
 const list = (value) => (value || '').split(',').map((s) => s.trim()).filter(Boolean)
 const DATA = process.env.PEER_DATA || 'tinystories'
@@ -53,6 +70,9 @@ const TRACKERS = list(process.env.TRACKERS)
 const DROP = Number(process.env.PEER_DROP) || 0
 const DELAY = Number(process.env.PEER_DELAY) || 0
 const DATA_DIR = process.env.DATA_DIR || './data'
+const PRIVATE = process.env.PEER_PRIVATE !== '0'
+const PRIVATE_GROUPS = Math.max(1, Number(process.env.PEER_PRIVATE_GROUPS) || (DATA === 'git' ? 4 : 1))
+const KEY = process.env.PEER_KEY || ''
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 
 // Only what the chat accepts (room.js isPlain): accents folded, curly quotes
@@ -144,7 +164,9 @@ function slices(text) {
 // The slices each peer holds: every PEER_COUNT-th, from its own number.
 const deal = (parts) => Array.from({ length: PEER_COUNT }, (_, n) => parts.filter((_, i) => i % PEER_COUNT === n))
 
-// A peer's slices, each indexed on its own; none: it holds nothing.
+// A peer's slices, each indexed on its own; none: it holds nothing. The
+// private table holds them all, as one text, in the background (its hint
+// takes a while: about 6 s per group).
 function remember(peer, texts) {
     const t = performance.now()
     peer.memories = texts.map((text) => index(text))
@@ -152,6 +174,12 @@ function remember(peer, texts) {
     if (texts.length) {
         log(`peer ${peer.n}: ${(peer.chars / 1e6).toFixed(2)}M characters in ${texts.length} slice${texts.length > 1 ? 's' : ''}, indexed in ${Math.round(performance.now() - t)} ms`)
     }
+    if (!peer.answerer || !texts.length) return
+    const p = performance.now()
+    peer.answerer
+        .load(texts.join('\n'))
+        .then(({ version, changes }) => log(`peer ${peer.n}: private table version ${version} (${PRIVATE_GROUPS} groups${version > 1 ? `, ${changes} elements changed` : ''}) in ${Math.round(performance.now() - p)} ms`))
+        .catch((err) => log(`peer ${peer.n}: private table failed: ${err.message || err}`))
 }
 
 // What a peer remembers of how `context` goes on: every slice's lookup,
@@ -160,7 +188,10 @@ function remember(peer, texts) {
 const recollect = (peer, context) => combine(peer.memories.map((memory) => ({ ...lookup(memory, context), w: 1 })))
 
 function startPeer(n, texts, rtcConfig) {
-    const peer = { n, memories: [], chars: 0, wires: 0, asked: 0, matched: 0 }
+    const peer = { n, memories: [], chars: 0, wires: 0, asked: 0, matched: 0, answerer: null }
+    const secret = KEY && (PEER_COUNT > 1 ? `${KEY}:${n}` : KEY)
+    if (PRIVATE) peer.answerer = createAnswerer({ groups: PRIVATE_GROUPS, secret: secret || null })
+    if (secret) keysFor(secret).then(({ pub }) => log(`peer ${n}: private key ${pub} (for SRC_PINNED_KEYS)`))
     remember(peer, texts)
     const client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false, tracker: { rtcConfig } })
     client.on('error', (err) => log(`peer ${n}: ${err.message || err}`))
@@ -182,6 +213,10 @@ function startPeer(n, texts, rtcConfig) {
             wire.once('close', () => peer.wires--)
         })
     }
+    if (peer.answerer) {
+        const Private = privateExtension(peer.answerer.handle)
+        client.seed(swarmFile(), { announce: TRACKERS }).on('wire', (wire) => wire.use(Private))
+    }
     return peer
 }
 
@@ -199,7 +234,8 @@ beat()
 setInterval(() => {
     beat()
     const total = (key) => peers.reduce((sum, p) => sum + p[key], 0)
-    log(`connections ${total('wires')}, questions ${total('asked')}, answered with a match ${total('matched')}`)
+    const answered = (key) => peers.reduce((sum, p) => sum + (p.answerer?.stats[key] ?? 0), 0)
+    log(`connections ${total('wires')}, questions ${total('asked')}, answered with a match ${total('matched')}${PRIVATE ? `; private: hints sent ${answered('hints')}, questions ${answered('questions')}` : ''}`)
 }, 30000).unref?.()
 
 // The sources change; read them again, and re-index the peers in place.

@@ -16,21 +16,32 @@
 //   what is typed before the caret) and { stop }; it hears { ready }, then
 //   { ghost: { id, text } } as the guess is written, and { ghost: { id,
 //   done } }. Its guesses read the page's title and host before the text
-//   (ghost.preamble), and never the chat's memory: questions would show the
-//   chat what is typed elsewhere.
+//   (ghost.preamble), and never the chat or its memory: a question to the
+//   chat would show it what is typed elsewhere. They ask the swarm's
+//   memory privately instead (private.js, answering.js): an encrypted query
+//   that the answering peers cannot read; they learn only that a question
+//   came, and when. Any peer can answer: the library servers (counted
+//   fully when the build pins their keys) and browsers, this one too (from
+//   what its terminal kept of the chat), so nothing hangs on a server. One query per word, fetched as the word starts ({ prefetch: {
+//   line } }) and answering every guess within it; never a follow-up, so
+//   how often the host asks does not depend on what came back.
 // - 'terminal', the extension's terminal (terminal.js): it speaks the
 //   worker's own messages (src/js/writer.js), passed on with guess ids
 //   swapped; the chat's lines it sends become the conversation the worker
 //   reads for its guesses.
 // One guess runs at a time: a new one, from anywhere, stops the last (the
-// field being typed in is the one that matters). Nothing typed in a page
-// touches the network or is kept.
+// field being typed in is the one that matters). Nothing typed in a page is
+// kept, or sent anywhere readable.
 //
 // The radio plays here too (the site's radio.js), so it goes on when the
 // popup closes; terminals reach it on a third kind of port, 'radio' (see
 // the radio, below).
 
+import * as answering from './js/answering.js'
+import { config } from './js/config.js'
+import * as library from './js/library.js'
 import { printElsewhere } from './js/print.js'
+import { createAsker } from './js/private.js'
 import { radio, restore } from './js/radio.js'
 import { state } from './js/state.js'
 import { load as loadText, t } from './js/text.js'
@@ -138,18 +149,44 @@ function stopFor(port) {
 
 // ------------------------------------------------------------ pages
 
+// The swarm's memory, asked privately, and answered from what the
+// terminal kept of the chat: joined when a page or terminal first
+// connects. Cautious: continuations with numbers, links or addresses only
+// where two peers agree.
+let asker = null
+let answerer = null
+
+function joinMemory() {
+    if (asker) return
+    asker = createAsker({ pinned: config.pinned ?? [], cautious: true })
+    answerer = answering.answerer()
+    answering.join({ asker, answerer })
+}
+
+// The terminal keeps chat lines in this origin's storage; this page hears
+// of them as they are written.
+addEventListener('storage', (event) => {
+    if (event.key === 'library') library.reload()
+})
+
 function pageGuess(port, { id, line, title, site }) {
     if (typeof line !== 'string' || !line.trim()) return
     rest()
     if (!ready) return
     const preface = `${t('ghost.preamble', { title: String(title || '').slice(0, 200), site: String(site || '') })}\n\n`
-    current = { id: ++next, port, theirs: id, terminal: false }
-    worker.postMessage({ command: 'guess', id: current.id, line: line.slice(-4000), memory: null, done: true, preface })
+    const guessed = (current = { id: ++next, port, theirs: id, terminal: false })
+    const asking = Boolean(asker?.ready())
+    worker.postMessage({ command: 'guess', id: guessed.id, line: line.slice(-4000), memory: null, done: !asking, preface })
+    if (!asking) return
+    asker.ask(line.slice(-4000), (memory, done) => {
+        if (current === guessed) worker.postMessage({ command: 'memory', id: guessed.id, seq: 0, memory, done })
+    })
 }
 
 function onPage(port, message) {
     if (message?.guess) pageGuess(port, message.guess)
     else if (message?.stop) stopFor(port)
+    else if (typeof message?.prefetch?.line === 'string' && asker?.ready()) asker.prefetch(message.prefetch.line.slice(-4000))
 }
 
 // ------------------------------------------------------------ terminals
@@ -199,9 +236,16 @@ printElsewhere((speaker, body, options) => {
     for (const port of radios) port.postMessage({ print: line })
 })
 
+// With the private memory's peers: how many, how many it can ask.
 const ticker = () => {
     const { radio = null, seeding = null } = state.snapshot()
-    return { radio, seeding }
+    const status = asker?.status()
+    const served = answerer?.status()
+    return {
+        radio,
+        seeding,
+        private: status ? { peers: status.peers, ready: status.ready, pinned: status.trusted, asked: status.asked, answered: status.answered, dropped: status.dropped, ...(served ? { serving: served.chars } : {}) } : null
+    }
 }
 
 function showTicker() {
@@ -239,6 +283,7 @@ api.runtime.onConnect.addListener((port) => {
     if (!kind) return
     texts.then(() => {
         kind.ports.add(port)
+        joinMemory()
         if (kind.ports === radios) return onRadioOpen(port)
         rest()
         if (ready) port.postMessage({ ready: true })

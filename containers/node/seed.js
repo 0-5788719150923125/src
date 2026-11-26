@@ -28,6 +28,8 @@ import path from 'node:path'
 import WebTorrent from 'webtorrent'
 import parseTorrent, { toTorrentFile } from 'parse-torrent'
 import { describePorts, webrtc } from './webrtc.js'
+// Shared with the browser, so both derive the same room torrents.
+import { chatExtension, createGossip, relay, roomFile } from '../../src/js/room.js'
 
 const RADIO_DIR = process.env.RADIO_DIR || '/radio'
 const TORRENTS_DIR = process.env.TORRENTS_DIR || '/torrents'
@@ -42,9 +44,6 @@ const MIRROR_URL = (process.env.MIRROR_URL || '').trim().replace(/\/+$/, '')
 const REFRESH = (Number(process.env.STATION_REFRESH) || 6) * 3600000
 const RETRY = 10 * 60000
 
-// room.js is shared with the browser (src/js/room.js), so both derive the
-// same room torrents. The image copies it next to this file.
-const { chatExtension, createGossip, relay, roomFile } = await import(process.env.ROOM_JS || './room.js')
 
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 

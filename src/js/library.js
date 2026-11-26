@@ -26,6 +26,7 @@ const FLOOR = 0.25
 let rooms = read() // name -> { lines, used }
 const indexes = new Map() // name -> index of that room's text, built when first needed
 let saving = null
+const watchers = new Set()
 
 function read() {
     try {
@@ -59,6 +60,23 @@ export function remember(room, line) {
     }
     indexes.delete(room)
     save()
+    for (const watcher of watchers) watcher()
+}
+
+// Every room this browser keeps, and its lines, oldest first: what it
+// answers private questions from (answering.js), whatever room they came
+// through.
+export const snapshot = () => Object.fromEntries(Object.entries(rooms).map(([name, room]) => [name, room.lines]))
+
+// Called after each line kept.
+export const watch = (watcher) => watchers.add(watcher)
+
+// Read again from storage: another page of the same origin may have kept
+// lines since (the extension's background, reading what its terminal kept).
+export function reload() {
+    rooms = read()
+    indexes.clear()
+    for (const watcher of watchers) watcher()
 }
 
 // A room's index, with where each line starts and what it counts for. The
