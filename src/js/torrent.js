@@ -23,7 +23,8 @@ async function startClient(opts = {}) {
 
 // The relayed connections still open, which take fresh credentials.
 const relayed = new Set()
-const hasRelay = (config) => (config?.iceServers || []).some((server) => server.username)
+const hasRelay = (config) =>
+    (config?.iceServers || []).some((server) => server.username)
 
 // WebTorrent's peer library takes the page's RTCPeerConnection once, as the
 // bundle loads (it ignores a `wrtc` option), so the page's is replaced
@@ -53,7 +54,11 @@ function loadWebTorrent() {
                     if (!hasRelay(config)) return
                     relayed.add(this)
                     this.addEventListener('connectionstatechange', () => {
-                        if (this.connectionState === 'closed' || this.connectionState === 'failed') relayed.delete(this)
+                        if (
+                            this.connectionState === 'closed' ||
+                            this.connectionState === 'failed'
+                        )
+                            relayed.delete(this)
                     })
                     this.addEventListener('icecandidate', (event) => {
                         if (event.candidate?.type === 'relay') this.#finish(250)
@@ -71,8 +76,16 @@ function loadWebTorrent() {
                     this.#gathered = {
                         at,
                         timer: setTimeout(() => {
-                            if (this.signalingState === 'closed' || this.iceGatheringState === 'complete') return
-                            this.dispatchEvent(new RTCPeerConnectionIceEvent('icecandidate', { candidate: null }))
+                            if (
+                                this.signalingState === 'closed' ||
+                                this.iceGatheringState === 'complete'
+                            )
+                                return
+                            this.dispatchEvent(
+                                new RTCPeerConnectionIceEvent('icecandidate', {
+                                    candidate: null
+                                })
+                            )
                         }, ms)
                     }
                 }
@@ -96,17 +109,27 @@ function loadWebTorrent() {
 let chatting = null
 export const getChatClient = () => (chatting ??= startChatClient())
 
-const STUN = { urls: ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] }
+const STUN = {
+    urls: ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478']
+}
 
 // { iceServers, ttl } from /api/turn (the site's own, beside the page; the
 // browser extension names the site's in config.turn); iceServers is empty
 // when there is no relay to be had, and `off` says none is deployed at all.
 async function relayServers() {
     try {
-        const response = await fetch(config.turn || './api/turn', { cache: 'no-store', signal: AbortSignal.timeout(4000) })
-        if (!response.headers.get('content-type')?.includes('json')) return { iceServers: [], off: true }
+        const response = await fetch(config.turn || './api/turn', {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(4000)
+        })
+        if (!response.headers.get('content-type')?.includes('json'))
+            return { iceServers: [], off: true }
         const { iceServers, ttl, reason } = await response.json()
-        return { iceServers: Array.isArray(iceServers) ? iceServers : [], ttl: Number(ttl) || 3600, off: reason === 'off' }
+        return {
+            iceServers: Array.isArray(iceServers) ? iceServers : [],
+            ttl: Number(ttl) || 3600,
+            off: reason === 'off'
+        }
     } catch {
         return { iceServers: [], ttl: 0, off: false }
     }
@@ -121,22 +144,23 @@ async function startChatClient() {
     const rtcConfig = { iceServers: [STUN, ...relay.iceServers] }
     // Fresh credentials at three quarters of their life; with none, ask
     // again every 5 minutes (a slow answer, or the month's cap).
-    const renew = (current) =>
-        setTimeout(
-            async () => {
-                const next = await relayServers()
-                if (next.iceServers.length) {
-                    rtcConfig.iceServers = [STUN, ...next.iceServers]
-                    for (const pc of relayed) {
-                        try {
-                            pc.setConfiguration({ ...pc.getConfiguration(), iceServers: rtcConfig.iceServers })
-                        } catch {}
-                    }
-                }
-                renew(next)
-            },
-            current.iceServers.length ? Math.max(current.ttl * 0.75, 60) * 1000 : 300000
-        )
+    const renew = (current) => {
+        const wait = current.iceServers.length
+            ? Math.max(current.ttl * 0.75, 60) * 1000
+            : 300000
+        setTimeout(async () => {
+            const next = await relayServers()
+            renew(next)
+            if (!next.iceServers.length) return
+            rtcConfig.iceServers = [STUN, ...next.iceServers]
+            for (const pc of relayed)
+                if (pc.signalingState !== 'closed')
+                    pc.setConfiguration({
+                        ...pc.getConfiguration(),
+                        iceServers: rtcConfig.iceServers
+                    })
+        }, wait)
+    }
     renew(relay)
     return startClient({ tracker: { rtcConfig } })
 }
@@ -145,17 +169,25 @@ export const announce = () => config.trackers
 
 // The streaming server, or null where service workers are unavailable (for
 // example, some private windows). The radio then plays over HTTP, from the
-// web seed or the mirror. The
-// first call starts it; a caller can start it early, while a torrent loads.
+// web seed or the mirror. The first call starts it; a caller can start it
+// early, while a torrent loads.
 export const getServer = () => (serving ??= startServer())
 
 async function startServer() {
     try {
-        const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' })
-        const worker = registration.active || registration.waiting || registration.installing
+        const registration = await navigator.serviceWorker.register('./sw.js', {
+            scope: './'
+        })
+        const worker =
+            registration.active ||
+            registration.waiting ||
+            registration.installing
         if (worker.state !== 'activated') {
             await new Promise((resolve) =>
-                worker.addEventListener('statechange', () => worker.state === 'activated' && resolve())
+                worker.addEventListener(
+                    'statechange',
+                    () => worker.state === 'activated' && resolve()
+                )
             )
         }
         // Audio requests only reach the worker once it controls the page. On
@@ -163,17 +195,30 @@ async function startServer() {
         // without it (a hard reload, a restored tab) asks to be claimed.
         if (!navigator.serviceWorker.controller) {
             await new Promise((resolve, reject) => {
-                navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+                navigator.serviceWorker.addEventListener(
+                    'controllerchange',
+                    resolve,
+                    { once: true }
+                )
                 registration.active?.postMessage('claim')
-                setTimeout(() => reject(new Error('service worker never took control')), 5000)
+                setTimeout(
+                    () =>
+                        reject(new Error('service worker never took control')),
+                    5000
+                )
             })
         }
         return (await getClient()).createServer({ controller: registration })
     } catch (err) {
-        console.warn('streaming unavailable, playing over HTTP:', err.message || err)
+        console.warn(
+            'streaming unavailable, playing over HTTP:',
+            err.message || err
+        )
         return null
     }
 }
 
 export const destroy = (torrent) =>
-    new Promise((resolve) => (torrent && !torrent.destroyed ? torrent.destroy({}, resolve) : resolve()))
+    new Promise((resolve) =>
+        torrent && !torrent.destroyed ? torrent.destroy({}, resolve) : resolve()
+    )

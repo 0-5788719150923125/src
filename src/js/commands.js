@@ -32,18 +32,24 @@ async function reset() {
     window.history.pushState('name', '', window.location.href.split('?')[0])
     localStorage.clear()
     sessionStorage.clear()
-    try {
-        for (const { name } of await window.indexedDB.databases()) window.indexedDB.deleteDatabase(name)
-    } catch {}
-    try {
-        const root = await navigator.storage.getDirectory()
-        for await (const name of root.keys()) await root.removeEntry(name, { recursive: true })
-    } catch {}
-    try {
-        for (const key of await caches.keys()) await caches.delete(key)
-    } catch {}
-    try {
-        await fetch('/reset.txt', { cache: 'no-store' })
-    } catch {}
+    const steps = [
+        async () => {
+            for (const { name } of await indexedDB.databases())
+                indexedDB.deleteDatabase(name)
+        },
+        async () => {
+            const root = await navigator.storage.getDirectory()
+            for await (const name of root.keys())
+                await root.removeEntry(name, { recursive: true })
+        },
+        async () => {
+            for (const key of await caches.keys()) await caches.delete(key)
+        },
+        () => fetch('/reset.txt', { cache: 'no-store' })
+    ]
+    // Each as far as the browser allows: what one refuses is said, and the
+    // rest go on.
+    for (const step of steps)
+        await step().catch((err) => console.warn('reset:', err.message || err))
     window.location.reload()
 }

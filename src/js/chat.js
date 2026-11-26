@@ -13,9 +13,25 @@ import * as library from './library.js'
 import * as recall from './recall.js'
 import { randomHex, sign, verify } from './crypto.js'
 import { daemonName } from './daemon.js'
-import { signIn, signedIn, you } from './identity.js'
-import { SPEAKERS, banner, clear, handle, print, say, showPrompt } from './print.js'
-import { MAX_LENGTH, chatExtension, createGossip, isPlain, relay, roomFile, sendTo } from './room.js'
+import { keptSecret, signIn, signedIn, you } from './identity.js'
+import {
+    SPEAKERS,
+    banner,
+    clear,
+    handle,
+    print,
+    say,
+    showPrompt
+} from './print.js'
+import {
+    MAX_LENGTH,
+    chatExtension,
+    createGossip,
+    isPlain,
+    relay,
+    roomFile,
+    sendTo
+} from './room.js'
 import { createSigil } from './sigil.js'
 import { state } from './state.js'
 import { html, t } from './text.js'
@@ -38,45 +54,36 @@ export async function connect() {
     // Every message is signed; a browser that cannot sign stays out.
     if (!(await signIn())) return
     showPrompt(you())
-
-    let seed = null
+    state.set('daemon', daemonName(keptSecret(DAEMON, 64)))
     try {
-        seed = localStorage.getItem(DAEMON)
-        if (!seed) localStorage.setItem(DAEMON, (seed = randomHex(64)))
-    } catch {}
-    state.set('daemon', daemonName(seed ?? randomHex(64)))
-
-    try {
-        await enter(chatInAddress() || DEFAULT_ROOM)
+        await enter(
+            new URLSearchParams(window.location.search).get('chat') ||
+                DEFAULT_ROOM
+        )
     } catch (err) {
         console.error(err)
         say(t('chat.failed'))
     }
 }
 
-// The chat named in the address.
-export const chatInAddress = () => new URLSearchParams(window.location.search).get('chat')
-
 // /chat <name>: a fresh screen, your sigil, and the new chat.
 export async function setChat([name]) {
     if (!name) return say(html('chat.usage'))
     clear()
     const keys = signedIn()
-    if (keys) print(null, banner(await createSigil(keys.pub), t('banner.connected')))
+    if (keys)
+        print(null, banner(await createSigil(keys.pub), t('banner.connected')))
     await enter(name)
 }
 
-async function enter(name) {
-    session.name = name.toLowerCase()
-    state.set('chat', session.name)
+async function enter(chat) {
+    const name = chat.toLowerCase()
+    session.name = name
+    state.set('chat', name)
     const url = new URL(window.location.href)
-    url.searchParams.set('chat', session.name)
+    url.searchParams.set('chat', name)
     window.history.pushState({}, '', url)
     writer.forget()
-    await joinRoom(session.name)
-}
-
-async function joinRoom(name) {
     const previous = session.room
     session.room = null
     await destroy(previous)
@@ -96,7 +103,12 @@ async function joinRoom(name) {
 // A message as this tab can read it, or null: its signature checked, plain
 // text of a sane length.
 async function read({ message, pubKey, signature }) {
-    if (typeof message !== 'string' || typeof pubKey !== 'string' || typeof signature !== 'string') return null
+    if (
+        typeof message !== 'string' ||
+        typeof pubKey !== 'string' ||
+        typeof signature !== 'string'
+    )
+        return null
     if (!(await verify(pubKey, signature, message))) return null
     if (message.length > MAX_LENGTH) return null
     message = message.replace(/\n/g, ' ')
@@ -128,28 +140,42 @@ function wireAllows(wire) {
 
 function senderAllows(key) {
     const now = Date.now()
-    const times = (heardFrom.get(key) ?? []).filter((at) => now - at < SENDER_WINDOW)
+    const times = (heardFrom.get(key) ?? []).filter(
+        (at) => now - at < SENDER_WINDOW
+    )
     times.push(now)
     heardFrom.set(key, times)
-    if (heardFrom.size > 1000) for (const [k, t] of heardFrom) if (now - t.at(-1) >= SENDER_WINDOW) heardFrom.delete(k)
+    if (heardFrom.size > 1000)
+        for (const [k, t] of heardFrom)
+            if (now - t.at(-1) >= SENDER_WINDOW) heardFrom.delete(k)
     return times.length <= SENDER_LIMIT
 }
 
 async function receive(payload, fromWire) {
-    if (!session.room || !session.gossip.fresh(payload.id)) return
-    if (!wireAllows(fromWire)) return
-    if (payload.room !== session.name) return
+    if (
+        !session.room ||
+        !session.gossip.fresh(payload.id) ||
+        !wireAllows(fromWire) ||
+        payload.room !== session.name
+    )
+        return
     try {
-        const readable = await read(payload)
-        if (!readable || !senderAllows(readable.sender)) return
+        const { message, sender } = (await read(payload)) ?? {}
+        if (!message || !senderAllows(sender)) return
         relay(payload, fromWire, session.room.wires)
-        const { message, sender } = readable
         notify(`${handle(SPEAKERS.fold)} ${message}`)
         keep(message)
         // The sender's key, on hover: who said it, should they need blocking.
-        print(SPEAKERS.fold, { text: message, tooltip: t('chat.sender', { key: sender }) }, { scroll: 'follow' })
+        print(
+            SPEAKERS.fold,
+            { text: message, tooltip: t('chat.sender', { key: sender }) },
+            { scroll: 'follow' }
+        )
     } catch (err) {
-        console.warn('Dropped a message that could not be read:', err.message || err)
+        console.warn(
+            'Dropped a message that could not be read:',
+            err.message || err
+        )
     }
 }
 
@@ -186,5 +212,6 @@ function notify(body) {
 // /alert
 export async function enableAlerts() {
     if (!('Notification' in window)) return say(t('alert.unsupported'))
-    if ((await Notification.requestPermission()) === 'granted') notify(t('alert.enabled'))
+    if ((await Notification.requestPermission()) === 'granted')
+        notify(t('alert.enabled'))
 }

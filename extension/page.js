@@ -64,11 +64,16 @@ import { ahead } from '../src/js/predict.js'
         }
     })()
     let settings = { on: true, sites: {} }
-    const enabled = () => Boolean(site) && (settings.sites?.[site] ?? settings.on) !== false
+    const enabled = () =>
+        Boolean(site) && (settings.sites?.[site] ?? settings.on) !== false
     const read = (stored) => {
-        if (stored && typeof stored === 'object') settings = { on: stored.on !== false, sites: stored.sites || {} }
+        if (stored && typeof stored === 'object')
+            settings = { on: stored.on !== false, sites: stored.sites || {} }
     }
-    api.storage?.local.get('ghost').then((got) => read(got?.ghost), () => {})
+    api.storage?.local.get('ghost').then(
+        (got) => read(got?.ghost),
+        () => {}
+    )
     api.storage?.onChanged.addListener((changes, area) => {
         if (area !== 'local' || !changes.ghost) return
         read(changes.ghost.newValue)
@@ -83,11 +88,13 @@ import { ahead } from '../src/js/predict.js'
     // Autocomplete hints for personal details: such fields get no guesses.
     // (A hint the page made up, or "off", is no reason to stay away: chat
     // boxes often say "off".)
-    const PRIVATE = /\b(cc-|one-time-code|password|username|email|tel|street-address|address-|postal-code|country|bday|sex|honorific|given-name|family-name|additional-name|nickname|organization|webauthn)/
+    const PRIVATE =
+        /\b(cc-|one-time-code|password|username|email|tel|street-address|address-|postal-code|country|bday|sex|honorific|given-name|family-name|additional-name|nickname|organization|webauthn)/
     // Code editors want Tab for themselves. A page can opt any field out
     // with data-src-ghost="off": the site's own command line does, since it
     // has a ghost of its own (src/index.html).
-    const CODE_EDITORS = '.cm-editor, .CodeMirror, .monaco-editor, .ace_editor, [data-src-ghost="off"]'
+    const CODE_EDITORS =
+        '.cm-editor, .CodeMirror, .monaco-editor, .ace_editor, [data-src-ghost="off"]'
     const NOT_TYPED = /^(numeric|decimal|tel|email|url|none)$/
 
     // The field a node belongs to, as { el, kind }, or null for anything
@@ -107,17 +114,25 @@ import { ahead } from '../src/js/predict.js'
             kind = 'editable'
         } else return null
         if (el.readOnly || el.disabled) return null
-        if (PRIVATE.test((el.getAttribute('autocomplete') || '').toLowerCase())) return null
+        if (PRIVATE.test((el.getAttribute('autocomplete') || '').toLowerCase()))
+            return null
         if (NOT_TYPED.test(el.getAttribute('inputmode') || '')) return null
         // Search boxes and the like bring their own suggestions, and their
         // own use of Tab.
-        if (/combobox|searchbox/.test(el.getAttribute('role') || '')) return null
+        if (/combobox|searchbox/.test(el.getAttribute('role') || ''))
+            return null
         if (el.closest(CODE_EDITORS)) return null
         if (getComputedStyle(el).direction === 'rtl') return null
         // A field too small to see, or in a frame too small to see, is a
         // page's own machinery (Google Docs types into a hidden frame).
         const box = el.getBoundingClientRect()
-        if (box.width < 8 || box.height < 8 || innerWidth < 40 || innerHeight < 12) return null
+        if (
+            box.width < 8 ||
+            box.height < 8 ||
+            innerWidth < 40 ||
+            innerHeight < 12
+        )
+            return null
         return { el, kind }
     }
 
@@ -132,10 +147,14 @@ import { ahead } from '../src/js/predict.js'
     // where browsers say so (Chrome's shadowRoot.getSelection).
     const selectionIn = (el) => {
         const root = el.getRootNode()
-        return (root !== document && root.getSelection?.()) || document.getSelection()
+        return (
+            (root !== document && root.getSelection?.()) ||
+            document.getSelection()
+        )
     }
 
-    const BLOCKS = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TR|UL)$/
+    const BLOCKS =
+        /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TR|UL)$/
 
     // The text of a fragment as it reads: line breaks for <br> and between
     // blocks, no-break spaces as spaces.
@@ -161,7 +180,10 @@ import { ahead } from '../src/js/predict.js'
         if (kind !== 'editable') {
             const { selectionStart: start, selectionEnd: end, value } = el
             if (start === null || start !== end) return null
-            return { before: value.slice(0, start), atEnd: !/\S/.test(value.slice(start)) }
+            return {
+                before: value.slice(0, start),
+                atEnd: !/\S/.test(value.slice(start))
+            }
         }
         const selection = selectionIn(el)
         if (!selection?.rangeCount || !selection.isCollapsed) return null
@@ -173,7 +195,11 @@ import { ahead } from '../src/js/predict.js'
         const after = document.createRange()
         after.setStart(caret.endContainer, caret.endOffset)
         after.setEnd(el, el.childNodes.length)
-        return { before: textOf(before.cloneContents()), atEnd: !/[^\s\u200b\ufeff]/.test(after.toString()), caret }
+        return {
+            before: textOf(before.cloneContents()),
+            atEnd: !/[^\s\u200b\ufeff]/.test(after.toString()),
+            caret
+        }
     }
 
     // ------------------------------------------------------------ the host
@@ -188,11 +214,13 @@ import { ahead } from '../src/js/predict.js'
 
     function connect() {
         if (port || connecting || !alive()) return
-        connecting = (async () => {
-            try {
-                // In Chrome the host is opened on request; Firefox's is
-                // the background page, woken by the message.
-                await api.runtime.sendMessage({ type: 'host' })
+        // In Chrome the host is opened on request; Firefox's is the
+        // background page, woken by the message. Refused, the extension was
+        // reloaded or removed since this page loaded: no ghost here until
+        // the page is reloaded too.
+        connecting = api.runtime
+            .sendMessage({ type: 'host' })
+            .then(() => {
                 const opened = api.runtime.connect({ name: 'pen' })
                 opened.onMessage.addListener(onHost)
                 opened.onDisconnect.addListener(() => {
@@ -202,9 +230,9 @@ import { ahead } from '../src/js/predict.js'
                     draw()
                 })
                 port = opened
-            } catch {}
-            connecting = null
-        })()
+            })
+            .catch(() => (port = null))
+            .finally(() => (connecting = null))
     }
 
     function onHost(message) {
@@ -277,11 +305,27 @@ import { ahead } from '../src/js/predict.js'
         if (!ready) return
         const id = ++next
         const { before } = state
-        if (!send({ guess: { id, line: before.slice(startOf(field.el, before)), title: document.title, site } })) return
+        if (
+            !send({
+                guess: {
+                    id,
+                    line: before.slice(startOf(field.el, before)),
+                    title: document.title,
+                    site
+                }
+            })
+        )
+            return
         current = { id, base: before, written: '', done: false, el: field.el }
         clearTimeout(watchdog)
         watchdog = setTimeout(() => {
-            if (current?.id !== id || current.written || current.done || retries >= RETRIES) return
+            if (
+                current?.id !== id ||
+                current.written ||
+                current.done ||
+                retries >= RETRIES
+            )
+                return
             retries++
             drop()
             ask()
@@ -307,13 +351,14 @@ import { ahead } from '../src/js/predict.js'
         // while it is typed (host.js), so the guesses within it need not wait.
         if (ready && state?.atEnd && before !== started && /\s$/.test(before)) {
             started = before
-            send({ prefetch: { line: before.slice(startOf(field.el, before)) } })
+            send({
+                prefetch: { line: before.slice(startOf(field.el, before)) }
+            })
         }
         const rest = shown(state)
-        if (rest === null) drop()
         // Guess anew once the typing pauses, unless the guess still has
         // something to show or is still being written.
-        if (!current || (rest === '' && current.done)) {
+        if (rest === null || (rest === '' && current.done)) {
             drop()
             if (state?.atEnd && wanted(before)) timer = setTimeout(ask, PAUSE)
         }
@@ -336,6 +381,7 @@ import { ahead } from '../src/js/predict.js'
         .copy { overflow: hidden; }
         .typed { color: transparent; }
         .ghost {
+            opacity: ${FADE};
             mask-image: linear-gradient(90deg, #000 40%, rgba(0, 0, 0, 0.2) 50%, #000 60%);
             mask-size: 300% 100%;
             mask-position: 100% 0;
@@ -351,7 +397,22 @@ import { ahead } from '../src/js/predict.js'
     `
     const HOST_STYLE =
         'all: initial !important; position: fixed !important; left: 0 !important; top: 0 !important; width: 0 !important; height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: visible !important; background: transparent !important; pointer-events: none !important; z-index: 2147483647 !important;'
-    const FONT = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant', 'fontFeatureSettings', 'fontKerning', 'letterSpacing', 'wordSpacing', 'textTransform', 'tabSize', 'lineHeight', 'wordBreak']
+    const FONT = [
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'fontStretch',
+        'fontVariant',
+        'fontFeatureSettings',
+        'fontKerning',
+        'letterSpacing',
+        'wordSpacing',
+        'textTransform',
+        'tabSize',
+        'lineHeight',
+        'wordBreak'
+    ]
 
     let layer = null
 
@@ -369,7 +430,12 @@ import { ahead } from '../src/js/predict.js'
         }
         const style = make('style')
         style.textContent = CSS
-        const parts = { typed: make('span', 'typed'), copyGhost: make('span', 'ghost'), lineGhost: make('span', 'ghost'), probe: make('span', 'probe') }
+        const parts = {
+            typed: make('span', 'typed'),
+            copyGhost: make('span', 'ghost'),
+            lineGhost: make('span', 'ghost'),
+            probe: make('span', 'probe')
+        }
         const copy = make('div', 'copy', parts.typed, parts.copyGhost)
         const line = make('div', 'line', parts.lineGhost)
         const clip = make('div', 'clip', copy, line)
@@ -377,14 +443,6 @@ import { ahead } from '../src/js/predict.js'
         document.documentElement.append(host)
         layer = { host, clip, copy, line, ...parts }
         return layer
-    }
-
-    // Into the top layer, above whatever the page put there before.
-    function raise(host) {
-        if (!host.popover) return
-        try {
-            host.showPopover()
-        } catch {}
     }
 
     // Out of the top layer too, so the next guess goes in above whatever
@@ -395,9 +453,12 @@ import { ahead } from '../src/js/predict.js'
         layer.lineGhost.textContent = ''
         layer.typed.textContent = ''
         layer.clip.style.display = 'none'
-        try {
-            if (layer.host.popover) layer.host.hidePopover()
-        } catch {}
+        if (isOpen(layer.host)) layer.host.hidePopover()
+    }
+
+    // A popover in the top layer (none where the browser has no popovers).
+    function isOpen(host) {
+        return Boolean(host.popover) && host.matches(':popover-open')
     }
 
     const px = (value) => parseFloat(value) || 0
@@ -406,9 +467,11 @@ import { ahead } from '../src/js/predict.js'
         const state = field && enabled() ? caretIn(field) : null
         const rest = state?.atEnd ? shown(state) : null
         if (!rest) return hide()
-        const hidden = !layer?.host.isConnected || layer.clip.style.display === 'none'
+        const hidden =
+            !layer?.host.isConnected || layer.clip.style.display === 'none'
         const l = view()
-        if (hidden) raise(l.host)
+        // Into the top layer, above whatever the page put there before.
+        if (hidden && l.host.popover && !isOpen(l.host)) l.host.showPopover()
         l.clip.style.display = 'block'
         const { el, kind } = field
         const style = getComputedStyle(el)
@@ -423,7 +486,12 @@ import { ahead } from '../src/js/predict.js'
         if (kind === 'editable') return drawAtCaret(l, el, state, rest, inner)
         l.line.style.display = 'none'
         l.lineGhost.textContent = ''
-        Object.assign(l.clip.style, { left: `${inner.left}px`, top: `${inner.top}px`, width: `${inner.width}px`, height: `${inner.height}px` })
+        Object.assign(l.clip.style, {
+            left: `${inner.left}px`,
+            top: `${inner.top}px`,
+            width: `${inner.width}px`,
+            height: `${inner.height}px`
+        })
         const copy = l.copy.style
         for (const name of FONT) copy[name] = style[name]
         Object.assign(copy, {
@@ -440,7 +508,6 @@ import { ahead } from '../src/js/predict.js'
         // A single line sits in the middle of an <input>, whatever its
         // line height says.
         if (kind === 'input') copy.lineHeight = copy.height
-        l.copyGhost.style.opacity = FADE
         l.typed.textContent = state.before
         l.copyGhost.textContent = rest
         l.copy.scrollTop = el.scrollTop
@@ -456,11 +523,17 @@ import { ahead } from '../src/js/predict.js'
         l.copyGhost.textContent = ''
         const at = caretRect(el, state.caret)
         if (!at) return hide()
-        const holder = state.caret.startContainer.nodeType === 1 ? state.caret.startContainer : state.caret.startContainer.parentElement
+        const holder =
+            state.caret.startContainer.nodeType === 1
+                ? state.caret.startContainer
+                : state.caret.startContainer.parentElement
         const style = getComputedStyle(holder || el)
         const outer = getComputedStyle(el)
         const left = inner.left + px(outer.paddingLeft)
-        const width = Math.max(inner.width - px(outer.paddingLeft) - px(outer.paddingRight), 0)
+        const width = Math.max(
+            inner.width - px(outer.paddingLeft) - px(outer.paddingRight),
+            0
+        )
         // The line's height, measured in its font; the caret is the height
         // of the text, centered in it.
         const probe = l.probe.style
@@ -468,7 +541,12 @@ import { ahead } from '../src/js/predict.js'
         l.probe.textContent = '\u200b'
         const lineHeight = l.probe.getBoundingClientRect().height || at.height
         const top = at.top - (lineHeight - at.height) / 2
-        Object.assign(l.clip.style, { left: `${inner.left}px`, top: `${inner.top}px`, width: `${inner.width}px`, height: `${Math.max(window.innerHeight - inner.top, 0)}px` })
+        Object.assign(l.clip.style, {
+            left: `${inner.left}px`,
+            top: `${inner.top}px`,
+            width: `${inner.width}px`,
+            height: `${Math.max(window.innerHeight - inner.top, 0)}px`
+        })
         const line = l.line.style
         for (const name of FONT) line[name] = style[name]
         Object.assign(line, {
@@ -482,7 +560,6 @@ import { ahead } from '../src/js/predict.js'
             color: style.color,
             whiteSpace: 'pre-wrap'
         })
-        l.lineGhost.style.opacity = FADE
         l.lineGhost.textContent = rest
     }
 
@@ -509,7 +586,8 @@ import { ahead } from '../src/js/predict.js'
         } else if (prev?.nodeType === 1 && prev.nodeName !== 'BR') {
             const boxes = prev.getClientRects()
             const r = boxes[boxes.length - 1]
-            if (r?.height) return { left: r.right, top: r.top, height: r.height }
+            if (r?.height)
+                return { left: r.right, top: r.top, height: r.height }
         }
         const block = (node.nodeType === 1 ? node : node.parentElement) ?? el
         const r = block.getBoundingClientRect()
@@ -531,7 +609,14 @@ import { ahead } from '../src/js/predict.js'
         if (kind === 'editable') return
         const at = el.selectionStart
         el.setRangeText(text, at, el.selectionEnd, 'end')
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }))
+        el.dispatchEvent(
+            new InputEvent('input', {
+                bubbles: true,
+                composed: true,
+                inputType: 'insertText',
+                data: text
+            })
+        )
     }
 
     // Keep the guess's next word (its leading space and any punctuation
@@ -552,7 +637,11 @@ import { ahead } from '../src/js/predict.js'
         holding = null
     }
 
-    const visible = () => Boolean(layer && (layer.copyGhost.textContent || layer.lineGhost.textContent))
+    const visible = () =>
+        Boolean(
+            layer &&
+            (layer.copyGhost.textContent || layer.lineGhost.textContent)
+        )
 
     // Only the visitor's own keys: a page's made-up key events (isTrusted
     // false) cannot take a guess, or use the model through it.
@@ -567,7 +656,12 @@ import { ahead } from '../src/js/predict.js'
             event.stopImmediatePropagation()
             if (event.repeat || holding) return
             takeWord()
-            const hold = (holding = { delay: setTimeout(() => (hold.repeat = setInterval(takeWord, TAKE_EVERY)), HOLD) })
+            const hold = (holding = {
+                delay: setTimeout(
+                    () => (hold.repeat = setInterval(takeWord, TAKE_EVERY)),
+                    HOLD
+                )
+            })
         } else if (event.key === 'Escape' && visible()) {
             event.preventDefault()
             event.stopImmediatePropagation()
@@ -608,6 +702,9 @@ import { ahead } from '../src/js/predict.js'
     addEventListener('input', () => field && changed(), true)
     addEventListener('blur', release)
     document.addEventListener('selectionchange', () => field && changed())
-    addEventListener('scroll', () => current && draw(), { capture: true, passive: true })
+    addEventListener('scroll', () => current && draw(), {
+        capture: true,
+        passive: true
+    })
     addEventListener('resize', () => current && draw())
 })()

@@ -13,7 +13,7 @@
 // order. artist defaults to 'Various Artists'.
 
 export default {
-    '59.1': {
+    59.1: {
         name: '59 Songs You MUST Hear Before You Die!',
         artist: 'Toehider',
         mode: 'shuffle'

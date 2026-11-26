@@ -8,7 +8,14 @@
 // remember, how many answered, and how long a match they found.
 
 import * as library from './library.js'
-import { CONTEXT, clean, memoryExtension, merge, remembers, sendMemory } from './memory.js'
+import {
+    CONTEXT,
+    clean,
+    memoryExtension,
+    merge,
+    remembers,
+    sendMemory
+} from './memory.js'
 import { state } from './state.js'
 
 // ms after which a question is closed: answers later than this are not
@@ -34,7 +41,8 @@ export function attach(wire) {
 }
 
 function onMessage(message, wire) {
-    if (typeof message.q === 'number' && typeof message.c === 'string') return answerQuestion(message, wire)
+    if (typeof message.q === 'number' && typeof message.c === 'string')
+        return answerQuestion(message, wire)
     const question = waiting.get(message.a)
     if (!question || question.from.has(wire)) return
     question.from.add(wire)
@@ -43,32 +51,36 @@ function onMessage(message, wire) {
     else question.heard()
 }
 
-// A peer in this room asks how a line goes on: answer from the library,
-// which weighs this room's text over other rooms'.
+// A failure here is logged and gives `fallback`: a broken library, answer or
+// callback means less memory, never a failed guess.
+function safely(run, fallback = null) {
+    try {
+        return run()
+    } catch (err) {
+        console.warn('recall:', err.message || err)
+        return fallback
+    }
+}
+
+// How this tab's library says `context` goes on, weighing this room's text
+// over other rooms': { L, spans, w }, or null.
+const own = (context) =>
+    safely(() => library.answer(context.slice(-CONTEXT), name))
+
+// A peer in this room asks how a line goes on.
 function answerQuestion(message, wire) {
     const now = Date.now()
     const seen = asked.get(wire) ?? { at: now, count: 0 }
     if (now - seen.at > 1000) Object.assign(seen, { at: now, count: 0 })
     asked.set(wire, seen)
     if (++seen.count > PER_SECOND) return
-    let found = null
-    try {
-        found = library.answer(message.c.slice(-CONTEXT), name)
-    } catch (err) {
-        console.warn('recall:', err.message || err)
-    }
-    try {
-        sendMemory(wire, { a: message.q, L: found?.L ?? 0, s: found?.spans ?? [], w: found?.w ?? 1 })
-    } catch {}
-}
-
-const own = (context) => {
-    try {
-        const found = library.answer(context.slice(-CONTEXT), name)
-        return found && { L: found.L, spans: found.spans, w: found.w }
-    } catch {
-        return null
-    }
+    const found = own(message.c)
+    sendMemory(wire, {
+        a: message.q,
+        L: found?.L ?? 0,
+        s: found?.spans ?? [],
+        w: found?.w ?? 1
+    })
 }
 
 // What the room remembers about how `context` goes on: `update(memory,
@@ -78,27 +90,18 @@ const own = (context) => {
 // has passed. memory is null when nothing matched. Never throws: a peer
 // that is slow, gone, or broken only means less memory.
 export function ask(context, update) {
-    const tell = (memory, done) => {
-        try {
-            update(memory, done)
-        } catch (err) {
-            console.warn('recall:', err.message || err)
-        }
-    }
+    const tell = (memory, done) => safely(() => update(memory, done))
     const answers = [own(context)]
-    const merged = () => {
-        try {
+    const merged = () =>
+        safely(() => {
             const memory = merge(answers)
             return memory.L ? memory : null
-        } catch (err) {
-            console.warn('recall:', err.message || err)
-            return null
-        }
-    }
+        })
     const wires = (room?.wires ?? []).filter(remembers)
     if (!wires.length) {
         const memory = merged()
-        if (memory) state.set('memory', { peers: 0, answered: 0, match: memory.L })
+        if (memory)
+            state.set('memory', { peers: 0, answered: 0, match: memory.L })
         return tell(memory, true)
     }
     const id = ++next
@@ -109,15 +112,17 @@ export function ask(context, update) {
         if (!waiting.delete(id)) return
         clearTimeout(timer)
         const memory = merged()
-        state.set('memory', { peers: wires.length, answered: answers.length - 1, match: memory?.L ?? 0 })
+        state.set('memory', {
+            peers: wires.length,
+            answered: answers.length - 1,
+            match: memory?.L ?? 0
+        })
         tell(memory, true)
     }
     waiting.set(id, question)
-    for (const wire of wires) {
-        try {
-            if (sendMemory(wire, { q: id, c: context.slice(-CONTEXT) })) question.expect++
-        } catch {}
-    }
+    for (const wire of wires)
+        if (sendMemory(wire, { q: id, c: context.slice(-CONTEXT) }))
+            question.expect++
     if (!question.expect) return question.finish()
     tell(merged(), false)
     timer = setTimeout(question.finish, WAIT)

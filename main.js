@@ -3,20 +3,7 @@
 // build the site and serve it on localhost, rebuilding whenever src/ or
 // stations.js changes, and restarting whenever this file, scripts/ or .env
 // does. Every run but --test also brings the year in LICENSE up to date.
-// Everything else is a flag.
-//
-//   node main.js              build + dev server at http://localhost:8000
-//   node main.js --port 3000  a different port
-//   node main.js --build      build only, into build/site/
-//   node main.js --test       run the tests
-//   node main.js --deploy     build, then publish to Cloudflare Pages
-//   node main.js --undeploy   take that deploy down again (asks first)
-//   node main.js --peers 8    test peers that remember a library (see
-//                             containers/node/peers.js)
-//   node main.js --extension  build the browser extension (scripts/extension.js)
-//   node main.js --publish chrome|firefox|all
-//                             build it, then upload it to the stores
-//                             (scripts/stores.js; asks first)
+// Everything else is a flag; `node main.js --help` lists them.
 
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -80,7 +67,14 @@ if (args.peers !== undefined) process.exit(await peers())
 // (node-datachannel, a native module the root install leaves out).
 async function peers() {
     const dir = path.join(ROOT, 'containers', 'node')
-    const webrtc = path.join(dir, 'node_modules', 'node-datachannel', 'build', 'Release', 'node_datachannel.node')
+    const webrtc = path.join(
+        dir,
+        'node_modules',
+        'node-datachannel',
+        'build',
+        'Release',
+        'node_datachannel.node'
+    )
     if (!fs.existsSync(webrtc)) {
         console.log(`Test peers need the stack's dependencies, with WebRTC for Node. Either:
   npm --prefix containers/node ci --ignore-scripts && npm --prefix containers/node rebuild node-datachannel
@@ -91,34 +85,58 @@ or run them in the stack: PEERS=${args.peers} PEER_DATA=${args.data} docker comp
     const env = {
         ...process.env,
         PEERS: args.peers,
-        PEER_DATA: ['tinystories', 'quijote', 'git'].includes(args.data) ? args.data : path.resolve(args.data),
+        PEER_DATA: ['tinystories', 'quijote', 'git'].includes(args.data)
+            ? args.data
+            : path.resolve(args.data),
         PEER_CHATS: args.chat,
         TRACKERS: trackerList().join(','),
         DATA_DIR: path.join(ROOT, 'data', 'peers')
     }
-    const child = spawn(process.execPath, ['peers.js'], { cwd: dir, env, stdio: 'inherit' })
-    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))
-    return new Promise((resolve) => child.on('exit', (code) => resolve(code ?? 0)))
+    const child = spawn(process.execPath, ['peers.js'], {
+        cwd: dir,
+        env,
+        stdio: 'inherit'
+    })
+    for (const signal of ['SIGINT', 'SIGTERM'])
+        process.on(signal, () => child.kill(signal))
+    return new Promise((resolve) =>
+        child.on('exit', (code) => resolve(code ?? 0))
+    )
 }
 
 if (args.test) {
-    process.exit(spawnSync(process.execPath, ['--test'], { cwd: ROOT, stdio: 'inherit' }).status ?? 1)
+    process.exit(
+        spawnSync(process.execPath, ['--test'], { cwd: ROOT, stdio: 'inherit' })
+            .status ?? 1
+    )
 }
 
 // The dev server runs under Node's watch mode, so edits to the code that
 // builds and serves the site (cached once imported) and to .env take effect
 // without a restart by hand. Edits under src/ only need a rebuild, which
 // the server does itself (scripts/serve.js).
-const serving = !args.build && !args.deploy && !args.undeploy && !args.extension && args.publish === undefined
+const serving =
+    !args.build &&
+    !args.deploy &&
+    !args.undeploy &&
+    !args.extension &&
+    args.publish === undefined
 if (serving && !process.env.SRC_WATCHED) {
-    const watched = ['main.js', 'scripts', '.env'].map((name) => path.join(ROOT, name)).filter((file) => fs.existsSync(file))
+    const watched = ['main.js', 'scripts', '.env']
+        .map((name) => path.join(ROOT, name))
+        .filter((file) => fs.existsSync(file))
     const child = spawn(
         process.execPath,
-        [...watched.map((file) => `--watch-path=${file}`), '--watch-preserve-output', ...process.argv.slice(1)],
+        [
+            ...watched.map((file) => `--watch-path=${file}`),
+            '--watch-preserve-output',
+            ...process.argv.slice(1)
+        ],
         { stdio: 'inherit', env: { ...process.env, SRC_WATCHED: '1' } }
     )
     child.on('exit', (code) => process.exit(code ?? 0))
-    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => child.kill(signal))
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
+        process.on(signal, () => child.kill(signal))
 } else {
     await run()
 }
@@ -127,17 +145,33 @@ async function run() {
     loadEnv()
     updateLicense()
     // Read after loadEnv, so .env can name the project.
-    const project = args.project || process.env.CLOUDFLARE_PAGES_PROJECT || DEFAULT_PROJECT
-    if (args.undeploy) process.exit((await undeploy({ project, domain: args.domain, yes: args.yes })) ? 0 : 1)
+    const project =
+        args.project || process.env.CLOUDFLARE_PAGES_PROJECT || DEFAULT_PROJECT
+    if (args.undeploy)
+        process.exit(
+            (await undeploy({ project, domain: args.domain, yes: args.yes }))
+                ? 0
+                : 1
+        )
     if (args.extension || args.publish !== undefined) {
         const built = await buildExtension()
         if (args.publish === undefined) process.exit(0)
         const { publish } = await import('./scripts/stores.js')
-        process.exit((await publish(args.publish, { ...built, source: sourceArchive(), yes: args.yes })) ? 0 : 1)
+        process.exit(
+            (await publish(args.publish, {
+                ...built,
+                source: sourceArchive(),
+                yes: args.yes
+            }))
+                ? 0
+                : 1
+        )
     }
     const out = await build(path.resolve(args.out), { deploy: args.deploy })
     if (args.deploy) {
-        process.exit((await deploy(out, { project, domain: args.domain })) ? 0 : 1)
+        process.exit(
+            (await deploy(out, { project, domain: args.domain })) ? 0 : 1
+        )
     }
     if (!args.build) serve(out, { host: args.host, port: Number(args.port) })
 }

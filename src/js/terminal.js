@@ -17,26 +17,20 @@ const input = document.getElementById('command')
 
 // Split a line into words, keeping "quoted phrases" whole.
 const parse = (line) =>
-    line
-        .match(/"[^"]+"|[^\s]+/g)
-        .map((word) => word.replace(/"(.+)"/, '$1'))
-        .filter(Boolean)
+    line.match(/"[^"]+"|\S+/g).map((word) => word.replace(/"(.+)"/, '$1'))
 
-// A command if the line names one; otherwise, a message to the room.
-export async function run(name, args = [], line = '') {
-    const command = find(name)
-    if (command) return command.run(args)
-    if (name.startsWith('/')) return say(t('terminal.missing', { command: name }))
-    return send(line)
-}
-
-// Echo the line, then act on it.
+// Echo the line, then act on it: a command if the line names one;
+// otherwise, a message to the room.
 async function submit(line) {
     const [word, ...args] = parse(line)
     const name = word.toLowerCase()
     remember(line)
     print(you(), line)
-    await run(name, args, line)
+    const command = find(name)
+    if (command) return command.run(args)
+    if (name.startsWith('/'))
+        return say(t('terminal.missing', { command: name }))
+    return send(line)
 }
 
 // ------------------------------------------------------------ the line
@@ -96,9 +90,17 @@ function tick() {
     const json = JSON.stringify(sortedKeys(state.snapshot()))
     if (json !== text.textContent) text.textContent = echo.textContent = json
     const margin = parseFloat(getComputedStyle(ticker).marginLeft) || 0
-    const overflow = head.offsetWidth + margin + text.getBoundingClientRect().width - document.body.clientWidth
+    const overflow =
+        head.offsetWidth +
+        margin +
+        text.getBoundingClientRect().width -
+        document.body.clientWidth
     ticker.classList.toggle('ticking', overflow > 0)
-    loop = overflow > 0 ? echo.getBoundingClientRect().left - text.getBoundingClientRect().left : 0
+    loop =
+        overflow > 0
+            ? echo.getBoundingClientRect().left -
+              text.getBoundingClientRect().left
+            : 0
     if (loop && last === null) {
         last = performance.now()
         requestAnimationFrame(slide)
@@ -142,7 +144,8 @@ const ATOM = `
     <div class="orbit"><div class="electron"></div></div>
 </div>`
 
-export async function start() {
+// `welcome`: the line said once the model is ready, if not the site's.
+export async function start({ welcome = null } = {}) {
     await load()
     head.textContent = handle({ ...SPEAKERS.pen, symbol: '=' })
     showPrompt(you())
@@ -155,7 +158,11 @@ export async function start() {
     })
     // Wrapped lines start at the left edge; the first starts after the prompt.
     const prompt = document.getElementById('prompt')
-    const indent = () => input.parentElement.style.setProperty('--indent', `${prompt.offsetWidth + 7}px`)
+    const indent = () =>
+        input.parentElement.style.setProperty(
+            '--indent',
+            `${prompt.offsetWidth + 7}px`
+        )
     new ResizeObserver(indent).observe(prompt)
     indent()
     ghost.attach()
@@ -169,5 +176,5 @@ export async function start() {
     // signed in without a word; and the writer's model starts loading at
     // once, its progress in the ticker.
     connect()
-    writer.load()
+    writer.load(welcome)
 }

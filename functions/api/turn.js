@@ -32,7 +32,8 @@
 //   TURN_TTL                     seconds each credential lives
 //   ALERT_WEBHOOK                Discord webhook for alerts (a secret)
 
-const MINT = (key) => `https://rtc.live.cloudflare.com/v1/turn/keys/${key}/credentials/generate-ice-servers`
+const MINT = (key) =>
+    `https://rtc.live.cloudflare.com/v1/turn/keys/${key}/credentials/generate-ice-servers`
 const GRAPHQL = 'https://api.cloudflare.com/client/v4/graphql'
 const USAGE_FRESH = 60000 // ms an isolate trusts the usage it read
 
@@ -42,7 +43,22 @@ const alerted = {} // alert -> when this isolate last sent it
 const reply = (body, status = 200) =>
     new Response(JSON.stringify(body), {
         status,
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+        headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store'
+        }
+    })
+const none = (reason, status) => reply({ iceServers: [], reason }, status)
+
+// POST JSON, with a bearer token when there is one.
+const post = (url, body, token) =>
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            ...(token && { Authorization: `Bearer ${token}` }),
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
     })
 
 // TURN egress over the last `days` days, in bytes, for the whole account.
@@ -54,16 +70,30 @@ export async function windowEgress(env, days, now = new Date()) {
             callsTurnUsageAdaptiveGroups(limit: 1, filter: { datetime_geq: $start, datetime_lt: $end }) { sum { egressBytes } }
         } }
     }`
-    const response = await fetch(GRAPHQL, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${env.TURN_USAGE_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, variables: { account: env.ACCOUNT_ID, start, end: now.toISOString() } })
-    })
+    const response = await post(
+        GRAPHQL,
+        {
+            query,
+            variables: {
+                account: env.ACCOUNT_ID,
+                start,
+                end: now.toISOString()
+            }
+        },
+        env.TURN_USAGE_TOKEN
+    )
     const payload = await response.json()
-    if (!response.ok || payload.errors?.length) throw new Error(`usage: HTTP ${response.status} ${JSON.stringify(payload.errors || '')}`)
-    const groups = payload.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups
+    if (!response.ok || payload.errors?.length)
+        throw new Error(
+            `usage: HTTP ${response.status} ${JSON.stringify(payload.errors || '')}`
+        )
+    const groups =
+        payload.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups
     if (!Array.isArray(groups)) throw new Error('usage: unexpected answer')
-    usage = { at: now.getTime(), bytes: Number(groups[0]?.sum?.egressBytes) || 0 }
+    usage = {
+        at: now.getTime(),
+        bytes: Number(groups[0]?.sum?.egressBytes) || 0
+    }
     return usage.bytes
 }
 
@@ -92,13 +122,21 @@ export async function alert(env, kind, facts, now = Date.now()) {
         const cache = globalThis.caches?.default
         const mark = new Request(`https://alerts.invalid/turn/${kind}`)
         if (cache && (await cache.match(mark))) return
-        const response = await fetch(env.ALERT_WEBHOOK, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: 'The Source', content: alertText(kind, facts), allowed_mentions: { parse: [] } })
+        const response = await post(env.ALERT_WEBHOOK, {
+            username: 'The Source',
+            content: alertText(kind, facts),
+            allowed_mentions: { parse: [] }
         })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        if (cache) await cache.put(mark, new Response('sent', { headers: { 'Cache-Control': `max-age=${Math.round(quiet / 1000)}` } }))
+        if (cache)
+            await cache.put(
+                mark,
+                new Response('sent', {
+                    headers: {
+                        'Cache-Control': `max-age=${Math.round(quiet / 1000)}`
+                    }
+                })
+            )
     } catch (err) {
         console.log(`alert: ${err.message}`)
     }
@@ -107,13 +145,21 @@ export async function alert(env, kind, facts, now = Date.now()) {
 export async function onRequestGet(context) {
     const { request, env } = context
     // Alerts go out after the reply; the dev server has no waitUntil.
-    const later = (promise) => (context.waitUntil ? context.waitUntil(promise) : promise)
-    if (!env.TURN_KEY_ID || !env.TURN_KEY_TOKEN || !env.ACCOUNT_ID || !env.TURN_USAGE_TOKEN) return reply({ iceServers: [], reason: 'off' })
+    const later = (promise) =>
+        context.waitUntil ? context.waitUntil(promise) : promise
+    if (
+        !env.TURN_KEY_ID ||
+        !env.TURN_KEY_TOKEN ||
+        !env.ACCOUNT_ID ||
+        !env.TURN_USAGE_TOKEN
+    )
+        return none('off')
     // Only the site's own pages, and the browser extension's (Chrome says
     // "none" for an extension with access to the site, Firefox
     // "same-origin"). Scripts can lie about this; other sites' pages cannot.
     const site = request.headers.get('Sec-Fetch-Site')
-    if (site && site !== 'same-origin' && site !== 'none') return reply({ iceServers: [], reason: 'forbidden' }, 403)
+    if (site && site !== 'same-origin' && site !== 'none')
+        return none('forbidden', 403)
     const cap = Number(env.TURN_CAP_GB ?? 90) * 1e9
     const days = Number(env.TURN_CAP_DAYS) > 0 ? Number(env.TURN_CAP_DAYS) : 3
     const ttl = Math.min(Math.max(Number(env.TURN_TTL) || 3600, 300), 172800)
@@ -121,22 +167,22 @@ export async function onRequestGet(context) {
         const bytes = await windowEgress(env, days)
         if (bytes >= cap) {
             later(alert(env, 'cap', { bytes, cap, days }))
-            return reply({ iceServers: [], reason: 'cap' })
+            return none('cap')
         }
         if (bytes >= cap / 2) later(alert(env, 'half', { bytes, cap, days }))
     } catch (err) {
         console.log(err.message)
         later(alert(env, 'unknown', { cap, days, error: err.message }))
-        return reply({ iceServers: [], reason: 'usage unknown' })
+        return none('usage unknown')
     }
-    const response = await fetch(MINT(env.TURN_KEY_ID), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${env.TURN_KEY_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ttl })
-    })
+    const response = await post(
+        MINT(env.TURN_KEY_ID),
+        { ttl },
+        env.TURN_KEY_TOKEN
+    )
     if (!response.ok) {
         console.log(`mint: HTTP ${response.status}`)
-        return reply({ iceServers: [], reason: 'mint failed' })
+        return none('mint failed')
     }
     const { iceServers = [] } = await response.json()
     // The page does not trickle candidates (WebTorrent's trackers send an
@@ -145,9 +191,15 @@ export async function onRequestGet(context) {
     // offer. Kept: STUN, TURN over UDP on 3478, and TURN over TLS on 443 for
     // networks that let little else out. Never port 53, which Cloudflare
     // warns times out in browsers.
-    const keep = (url) => (/^stun:/.test(url) && !/:53$/.test(url)) || /^turn:[^?]*:3478\?transport=udp$/.test(url) || /^turns:[^?]*:443\?transport=tcp$/.test(url)
+    const keep = (url) =>
+        (/^stun:/.test(url) && !/:53$/.test(url)) ||
+        /^turn:[^?]*:3478\?transport=udp$/.test(url) ||
+        /^turns:[^?]*:443\?transport=tcp$/.test(url)
     const servers = iceServers
-        .map((server) => ({ ...server, urls: [].concat(server.urls).filter(keep) }))
+        .map((server) => ({
+            ...server,
+            urls: [].concat(server.urls).filter(keep)
+        }))
         .filter((server) => server.urls.length)
     return reply({ iceServers: servers, ttl })
 }

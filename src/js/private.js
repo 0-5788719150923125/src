@@ -43,16 +43,41 @@
 import { keysFor, randomHex, sign, verify } from './crypto.js'
 import { build, createShelves, match, question, recordOf } from './contexts.js'
 import { merge } from './memory.js'
-import { SHAPE, answer, createTable, elements, hint, locate, mask, readRecord, rewind, select, setRecords, updateHint } from './pir.js'
+import { extension, send as sendOn, speaks as speaksOn } from './wire.js'
+import {
+    SHAPE,
+    answer,
+    createTable,
+    elements,
+    hint,
+    locate,
+    mask,
+    readRecord,
+    rewind,
+    select,
+    setRecords,
+    toBytes,
+    toWords,
+    updateHint
+} from './pir.js'
 
 export const EXTENSION = 'src_pir'
-const TYPE = { HELLO: 1, OFFER: 2, HINT: 3, PART: 4, CHANGES: 5, QUERY: 6, ANSWER: 7, STALE: 8 }
+const TYPE = {
+    HELLO: 1,
+    OFFER: 2,
+    HINT: 3,
+    PART: 4,
+    CHANGES: 5,
+    QUERY: 6,
+    ANSWER: 7,
+    STALE: 8
+}
 const JSON_TYPES = new Set([TYPE.HELLO, TYPE.OFFER, TYPE.HINT])
 // What a peer that answers takes; the rest is an asker's.
 export const ANSWERED = new Set([TYPE.HELLO, TYPE.HINT, TYPE.QUERY])
 const PART_BYTES = 1 << 15 // hints and queries go in parts of 32 KiB
 const MAX_JSON = 4096
-export const WAIT = 1500 // ms a query's answers are waited for (guesses take them as they come)
+const WAIT = 1500 // ms a query's answers are waited for (guesses take them as they come)
 const KEEP = 64 // records an asker keeps, by key
 const FRESH = 120000 // ms a kept record answers for
 const PER_SECOND = 4 // queries a peer answers per wire, at most
@@ -68,33 +93,28 @@ const RISKY = /\d|https?:|www\.|@|\.(com|org|net|io)\b/i
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-const LITTLE = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1
 
 // The torrent askers and answering peers meet on.
-export const swarmFile = () => new File([encoder.encode('The Source / private memory / 1')], 'src-private-memory')
+export const swarmFile = () =>
+    new File(
+        [encoder.encode('The Source / private memory / 1')],
+        'src-private-memory'
+    )
 
 // What must agree between an asker and a peer for a query to make sense.
-const shapeOf = ({ cols, n, sigma, p, record, seed }) => ({ cols, n, sigma, p, record, seed })
-const sameShape = (a, b) => Object.keys(shapeOf(SHAPE)).every((k) => a?.[k] === b[k])
+const shapeOf = ({ cols, n, sigma, p, record, seed }) => ({
+    cols,
+    n,
+    sigma,
+    p,
+    record,
+    seed
+})
+const sameShape = (a, b) =>
+    Object.keys(shapeOf(SHAPE)).every((k) => a?.[k] === b[k])
 const proof = (nonce) => `src_pir ${nonce}`
 
 // ------------------------------------------------------------ messages
-
-// Int32 words <-> little-endian bytes.
-function toBytes(words) {
-    if (LITTLE) return new Uint8Array(words.buffer, words.byteOffset, words.byteLength)
-    const out = new Uint8Array(words.length * 4)
-    const view = new DataView(out.buffer)
-    words.forEach((w, i) => view.setInt32(i * 4, w, true))
-    return out
-}
-
-function toWords(bytes) {
-    if (bytes.length % 4) throw new Error('not whole words')
-    if (LITTLE) return new Int32Array(bytes.slice().buffer)
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    return Int32Array.from({ length: bytes.length / 4 }, (_, i) => view.getInt32(i * 4, true))
-}
 
 // A message: its type, then a header of 32-bit numbers, then a body.
 function frame(type, header = [], body = new Uint8Array(0)) {
@@ -106,7 +126,8 @@ function frame(type, header = [], body = new Uint8Array(0)) {
     return out
 }
 
-const json = (type, value) => frame(type, [], encoder.encode(JSON.stringify(value)))
+const json = (type, value) =>
+    frame(type, [], encoder.encode(JSON.stringify(value)))
 
 function parse(buf) {
     const type = buf[0]
@@ -117,49 +138,89 @@ function parse(buf) {
         const value = JSON.parse(decoder.decode(buf.subarray(1)))
         return value && typeof value === 'object' ? { ...value, type } : null
     }
-    if (type === TYPE.PART && buf.length >= 13) return { type, v: at(0), index: at(1), total: at(2), bytes: buf.slice(13) }
-    if (type === TYPE.CHANGES && buf.length >= 17 && (buf.length - 17) % 12 === 0) {
-        const changes = []
-        for (let i = 4; 1 + 4 * i < buf.length; i += 3) changes.push({ row: at(i), column: at(i + 1), change: at(i + 2) })
-        return { type, from: at(0), to: at(1), index: at(2), total: at(3), changes }
-    }
-    if (type === TYPE.QUERY && buf.length >= 17) return { type, id: at(0), v: at(1), index: at(2), total: at(3), bytes: buf.slice(17) }
-    if (type === TYPE.ANSWER && buf.length >= 9) return { type, id: at(0), v: at(1), words: toWords(buf.subarray(9)) }
-    if (type === TYPE.STALE && buf.length === 9) return { type, id: at(0), v: at(1) }
+    if (type === TYPE.PART && buf.length >= 13)
+        return {
+            type,
+            v: at(0),
+            index: at(1),
+            total: at(2),
+            bytes: buf.slice(13)
+        }
+    if (
+        type === TYPE.CHANGES &&
+        buf.length >= 17 &&
+        (buf.length - 17) % 12 === 0
+    )
+        return {
+            type,
+            from: at(0),
+            to: at(1),
+            index: at(2),
+            total: at(3),
+            bytes: buf.slice(17)
+        }
+    if (type === TYPE.QUERY && buf.length >= 17)
+        return {
+            type,
+            id: at(0),
+            v: at(1),
+            index: at(2),
+            total: at(3),
+            bytes: buf.slice(17)
+        }
+    if (type === TYPE.ANSWER && buf.length >= 9)
+        return { type, id: at(0), v: at(1), words: toWords(buf.subarray(9)) }
+    if (type === TYPE.STALE && buf.length === 9)
+        return { type, id: at(0), v: at(1) }
     return null
 }
 
-const speaks = (wire) => !wire.destroyed && Boolean(wire.peerExtendedMapping?.[EXTENSION])
+const speaks = (wire) => speaksOn(wire, EXTENSION)
 
-function send(wire, bytes) {
-    if (!speaks(wire)) return false
-    try {
-        wire.extended(EXTENSION, bytes)
-        return true
-    } catch {
-        return false
+// A message to a wire, if it speaks the extension; false if it went nowhere.
+export const send = (wire, bytes) => sendOn(wire, EXTENSION, bytes)
+
+// Hints, queries and changes go in parts of `size` bytes (at least one
+// part), each framed with its index and their total: false if one went
+// nowhere.
+function sendParts(wire, type, header, bytes, size = PART_BYTES) {
+    const total = Math.max(1, Math.ceil(bytes.length / size))
+    for (let index = 0; index < total; index++) {
+        if (
+            !send(
+                wire,
+                frame(
+                    type,
+                    [...header, index, total],
+                    bytes.subarray(index * size, (index + 1) * size)
+                )
+            )
+        )
+            return false
     }
+    return true
+}
+
+const inPlace = ({ index, total }) => total >= 1 && index >= 0 && index < total
+
+// A message that came in parts, put back together: `parts` ({ got: [],
+// count: 0 }) keeps each part once, and once all `total` have come, their
+// bytes are returned in order (null until then).
+function collect(parts, { index, total, bytes }) {
+    if (parts.got[index]) return null
+    parts.got[index] = bytes
+    if (++parts.count < total) return null
+    const out = new Uint8Array(
+        parts.got.reduce((n, part) => n + part.length, 0)
+    )
+    parts.got.reduce((at, part) => (out.set(part, at), at + part.length), 0)
+    return out
 }
 
 // A wire extension (BEP 10) handing each message to onMessage(message,
 // wire), and { type: 'open' } once the other side is known to speak it.
-export function privateExtension(onMessage) {
-    function Private(wire) {
-        this.wire = wire
-    }
-    Private.prototype.name = EXTENSION
-    Private.prototype.onExtendedHandshake = function (handshake) {
-        if (handshake?.m?.[EXTENSION]) onMessage({ type: 'open' }, this.wire)
-    }
-    Private.prototype.onMessage = function (buf) {
-        let message = null
-        try {
-            message = parse(buf)
-        } catch {}
-        if (message) onMessage(message, this.wire)
-    }
-    return Private
-}
+export const privateExtension = (onMessage) =>
+    extension(EXTENSION, parse, onMessage, { opened: true })
 
 // ------------------------------------------------------------ the peer
 
@@ -169,7 +230,15 @@ export function privateExtension(onMessage) {
 // `hintsPerMinute` and `questionsPerSecond` cap what it gives everyone
 // together (a browser gives less than a server). `history` and `push`
 // (element changes kept, and pushed) are for tests.
-export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hintsPerMinute = 120, questionsPerSecond = 200, history: keep = HISTORY, push = PUSH } = {}) {
+export function createAnswerer({
+    groups = 1,
+    secret = null,
+    shape = SHAPE,
+    hintsPerMinute = 120,
+    questionsPerSecond = 200,
+    history: keep = HISTORY,
+    push = PUSH
+} = {}) {
     const keys = secret ? keysFor(secret) : null
     const count = groups * shape.cols
     let table = null
@@ -180,7 +249,7 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
     const holders = new Set() // wires holding a hint
     const asked = new WeakMap() // wire -> { at, count }
     const hinting = new WeakMap() // wire -> { v, at }: the last hint it was sent
-    const arriving = new WeakMap() // wire -> Map(id -> { v, total, got, count }): queries in parts
+    const arriving = new WeakMap() // wire -> Map(id -> { v, got, count }): queries in parts
     const given = { hints: [], questions: [] } // when each was given, over the last minute and second
     const allowed = (list, ms, most) => {
         const now = Date.now()
@@ -196,7 +265,10 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
         const body = { v: table.version, groups, shape: shapeOf(shape) }
         if (keys) {
             const k = await keys
-            Object.assign(body, { key: k.pub, sig: await sign(k, proof(nonces.get(wire))) })
+            Object.assign(body, {
+                key: k.pub,
+                sig: await sign(k, proof(nonces.get(wire)))
+            })
         }
         send(wire, json(TYPE.OFFER, body))
     }
@@ -218,7 +290,8 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
     async function commit(updates) {
         const from = table.version
         const changes = setRecords(table, updates)
-        if (changes.length > (table.rows * shape.cols) / 8) hinted = await hint(table)
+        if (changes.length > (table.rows * shape.cols) / 8)
+            hinted = await hint(table)
         else if (changes.length) {
             const next = Int32Array.from(hinted)
             await updateHint(next, changes, shape)
@@ -226,19 +299,29 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
         }
         history.push({ v: table.version, changes })
         let kept = 0
-        history = history.reverse().filter((entry) => (kept += entry.changes.length) <= keep).reverse()
-        const total = Math.max(1, Math.ceil(changes.length / CHANGE_PART))
-        for (const wire of holders) {
-            if (changes.length > push) {
-                offer(wire)
-                continue
-            }
-            for (let index = 0; index < total; index++) {
-                const part = changes.slice(index * CHANGE_PART, (index + 1) * CHANGE_PART)
-                const body = new Int32Array(part.length * 3)
-                part.forEach(({ row, column, change }, i) => body.set([row, column, change], i * 3))
-                send(wire, frame(TYPE.CHANGES, [from, table.version, index, total], toBytes(body)))
-            }
+        history = history
+            .reverse()
+            .filter((entry) => (kept += entry.changes.length) <= keep)
+            .reverse()
+        if (changes.length > push) for (const wire of holders) offer(wire)
+        else {
+            const body = toBytes(
+                Int32Array.from(
+                    changes.flatMap(({ row, column, change }) => [
+                        row,
+                        column,
+                        change
+                    ])
+                )
+            )
+            for (const wire of holders)
+                sendParts(
+                    wire,
+                    TYPE.CHANGES,
+                    [from, table.version],
+                    body,
+                    CHANGE_PART * 12
+                )
         }
         return { version: table.version, changes: changes.length }
     }
@@ -247,8 +330,9 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
     // the first, only the records that differ change.
     async function load(text, options = {}) {
         const records = build(text, count, options)
-        if (!table) return first(records)
-        return commit(records.map((bytes, index) => [index, bytes]))
+        return table
+            ? commit(records.map((bytes, index) => [index, bytes]))
+            : first(records)
     }
 
     // The table kept a line at a time (a browser's library, contexts.js
@@ -258,15 +342,21 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
     async function sync(library, { weigh } = {}) {
         shelves ??= createShelves(count)
         const touched = shelves.sync(library, weigh)
-        if (!table) return first(shelves.records())
-        return commit([...touched].map((index) => [index, shelves.record(index)]))
+        return table
+            ? commit(
+                  [...touched].map((index) => [index, shelves.record(index)])
+              )
+            : first(shelves.records())
     }
 
     // A query whose parts have all come, as words; null until then. A wire
     // has a few queries arriving at most, and each the right size.
     function assemble(message, wire) {
-        const total = Math.ceil((shape.cols * 4) / PART_BYTES)
-        if (message.total !== total || message.index < 0 || message.index >= total) return null
+        if (
+            message.total !== Math.ceil((shape.cols * 4) / PART_BYTES) ||
+            !inPlace(message)
+        )
+            return null
         if (!arriving.has(wire)) arriving.set(wire, new Map())
         const pending = arriving.get(wire)
         if (!pending.has(message.id)) {
@@ -274,18 +364,10 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
             pending.set(message.id, { v: message.v, got: [], count: 0 })
         }
         const query = pending.get(message.id)
-        if (query.v !== message.v || query.got[message.index]) return null
-        query.got[message.index] = message.bytes
-        if (++query.count < total) return null
+        const bytes = query.v === message.v && collect(query, message)
+        if (!bytes) return null
         pending.delete(message.id)
-        const bytes = new Uint8Array(shape.cols * 4)
-        let at = 0
-        for (const part of query.got) {
-            if (at + part.length > bytes.length) return null
-            bytes.set(part, at)
-            at += part.length
-        }
-        return at === bytes.length ? toWords(bytes) : null
+        return bytes.length === shape.cols * 4 ? toWords(bytes) : null
     }
 
     // The changes since version v, or null when they are no longer kept.
@@ -296,13 +378,19 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
     }
 
     function handle(message, wire) {
-        if (message.type === TYPE.HELLO && typeof message.nonce === 'string' && message.nonce.length <= 128) {
+        if (
+            message.type === TYPE.HELLO &&
+            typeof message.nonce === 'string' &&
+            message.nonce.length <= 128
+        ) {
             nonces.set(wire, message.nonce)
-            greeted.add(wire)
-            wire.once?.('close', () => {
-                greeted.delete(wire)
-                holders.delete(wire)
-            })
+            if (!greeted.has(wire)) {
+                greeted.add(wire)
+                wire.once?.('close', () => {
+                    greeted.delete(wire)
+                    holders.delete(wire)
+                })
+            }
             return offer(wire)
         }
         if (!table) return
@@ -314,9 +402,7 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
             if (last?.v === table.version && now - last.at < HINT_EVERY) return
             if (!allowed(given.hints, 60000, hintsPerMinute)) return
             hinting.set(wire, { v: table.version, at: now })
-            const bytes = toBytes(hinted)
-            const total = Math.ceil(bytes.length / PART_BYTES)
-            for (let index = 0; index < total; index++) send(wire, frame(TYPE.PART, [table.version, index, total], bytes.subarray(index * PART_BYTES, (index + 1) * PART_BYTES)))
+            sendParts(wire, TYPE.PART, [table.version], toBytes(hinted))
             holders.add(wire)
             stats.hints++
             return
@@ -340,11 +426,33 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
                 }
                 out = rewind(out, query, changes)
             }
-            send(wire, frame(TYPE.ANSWER, [message.id, message.v], toBytes(out)))
+            send(
+                wire,
+                frame(TYPE.ANSWER, [message.id, message.v], toBytes(out))
+            )
         }
     }
 
-    return { handle, load, sync, stats, get version() { return table?.version ?? 0 } }
+    // Loads and syncs run one after another: two at once could each make a
+    // first table, or interleave their changes.
+    let queue = Promise.resolve()
+    const inTurn =
+        (fn) =>
+        (...args) =>
+            (queue = queue.then(
+                () => fn(...args),
+                () => fn(...args)
+            ))
+
+    return {
+        handle,
+        load: inTurn(load),
+        sync: inTurn(sync),
+        stats,
+        get version() {
+            return table?.version ?? 0
+        }
+    }
 }
 
 // ------------------------------------------------------------ the asker
@@ -360,8 +468,14 @@ export function createAnswerer({ groups = 1, secret = null, shape = SHAPE, hints
 // peers' answers, or null. With `pinned` (public keys), only peers that
 // prove one are heard; `cautious` keeps risky continuations only where two
 // peers agree.
-export function createAsker({ pinned = [], pinnedOnly = false, cautious = false, shape = SHAPE, pool = 6 } = {}) {
-    const peers = new Map() // wire -> { nonce, offer, trusted, hint, version, parts }
+export function createAsker({
+    pinned = [],
+    pinnedOnly = false,
+    cautious = false,
+    shape = SHAPE,
+    pool = 6
+} = {}) {
+    const peers = new Map() // wire -> { nonce, offer, trusted, hint, version, parts, changing }
     const masks = []
     let filling = null
     let next = 0
@@ -384,53 +498,59 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
     async function make() {
         while (masks.length < pool) {
             masks.push(await mask(shape))
-            if (queued) {
-                const entry = queued
-                queued = null
-                put(entry)
-            }
+            const entry = queued
+            queued = null
+            if (entry) put(entry)
         }
     }
 
-    const holding = () => [...peers.values()].filter((peer) => peer.hint || peer.parts).length
-
-    function fetchHint(wire, peer) {
-        peer.parts = { v: peer.offer.v, got: [], count: 0 }
-        send(wire, json(TYPE.HINT, { v: peer.offer.v }))
-    }
+    const holding = () =>
+        [...peers.values()].filter((peer) => peer.hint || peer.parts).length
 
     async function onOffer(message, wire, peer) {
-        if (!sameShape(message.shape, shape) || !(message.groups >= 1 && message.groups <= MAX_GROUPS) || !(message.v >= 1)) return
-        const trusted = typeof message.key === 'string' && pinned.includes(message.key) && (await verify(message.key, message.sig, proof(peer.nonce)))
+        if (
+            !sameShape(message.shape, shape) ||
+            !(message.groups >= 1 && message.groups <= MAX_GROUPS) ||
+            !(message.v >= 1)
+        )
+            return
+        const trusted =
+            typeof message.key === 'string' &&
+            pinned.includes(message.key) &&
+            (await verify(message.key, message.sig, proof(peer.nonce)))
         if (pinnedOnly && !trusted) return
         peer.offer = message
         peer.trusted = trusted
         if (peer.version === message.v) return
         if (!peer.hint && !peer.parts && holding() >= PEERS) {
             // A pinned peer takes an unpinned one's place.
-            const other = trusted && [...peers.values()].find((p) => !p.trusted && (p.hint || p.parts))
+            const other =
+                trusted &&
+                [...peers.values()].find(
+                    (p) => !p.trusted && (p.hint || p.parts)
+                )
             if (!other) return
             Object.assign(other, { hint: null, parts: null, version: 0 })
         }
-        fetchHint(wire, peer)
+        peer.parts = { v: message.v, got: [], count: 0 }
+        send(wire, json(TYPE.HINT, { v: message.v }))
     }
 
-    function onPart(message, wire, peer) {
+    function onPart(message, peer) {
         const parts = peer.parts
-        if (!parts || message.v !== parts.v || !(message.total >= 1) || message.index < 0 || message.index >= message.total) return
-        if (message.total * PART_BYTES > MAX_HINT || parts.got[message.index]) return
-        parts.got[message.index] = message.bytes
-        if (++parts.count < message.total) return
-        const all = new Uint8Array(parts.got.reduce((n, b) => n + b.length, 0))
-        let at = 0
-        for (const bytes of parts.got) {
-            all.set(bytes, at)
-            at += bytes.length
-        }
+        if (
+            !parts ||
+            message.v !== parts.v ||
+            !inPlace(message) ||
+            message.total * PART_BYTES > MAX_HINT
+        )
+            return
+        const bytes = collect(parts, message)
+        if (!bytes) return
         peer.parts = null
-        const words = toWords(all)
-        if (words.length !== peer.offer.groups * elements(shape) * shape.n) return
-        peer.hint = words
+        if (bytes.length !== peer.offer.groups * elements(shape) * shape.n * 4)
+            return
+        peer.hint = toWords(bytes)
         peer.version = parts.v
         fill()
     }
@@ -438,15 +558,23 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
     // Changes come in parts; applied once all have come, to a copy (answers
     // being read meanwhile use the hint they were asked under).
     async function onChanges(message, peer) {
-        if (!peer.hint || peer.version !== message.from || !(message.total >= 1) || message.index < 0 || message.index >= message.total) return
-        if (peer.changing?.to !== message.to) peer.changing = { to: message.to, got: [], count: 0 }
-        const changing = peer.changing
-        if (changing.got[message.index]) return
-        changing.got[message.index] = message.changes
-        if (++changing.count < message.total) return
+        if (!peer.hint || peer.version !== message.from || !inPlace(message))
+            return
+        if (peer.changing?.to !== message.to)
+            peer.changing = { to: message.to, got: [], count: 0 }
+        const bytes = collect(peer.changing, message)
+        if (!bytes) return
         peer.changing = null
+        const words = toWords(bytes)
+        const changes = []
+        for (let i = 0; i < words.length; i += 3)
+            changes.push({
+                row: words[i],
+                column: words[i + 1],
+                change: words[i + 2]
+            })
         const next = Int32Array.from(peer.hint)
-        await updateHint(next, changing.got.flat(), shape)
+        await updateHint(next, changes, shape)
         if (peer.version !== message.from) return
         peer.hint = next
         peer.version = message.to
@@ -457,20 +585,33 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
         const sent = q?.sent.get(wire)
         if (!sent || q.from.has(wire) || sent.v !== message.v) return
         q.from.add(wire)
-        try {
-            const group = locate(recordOf(q.entry.asked, sent.groups * shape.cols), shape).group
-            q.entry.records.set(wire, readRecord(message.words, sent.hint, q.mask, group))
-        } catch {}
+        // An answer of the wrong size is a peer's mistake, and says nothing.
+        if (message.words.length === sent.groups * elements(shape)) {
+            const group = locate(
+                recordOf(q.entry.asked, sent.groups * shape.cols),
+                shape
+            ).group
+            q.entry.records.set(
+                wire,
+                readRecord(message.words, sent.hint, q.mask, group)
+            )
+        }
         counts.answered++
-        if (q.from.size < q.sent.size) return heard(q.entry)
-        clearTimeout(q.timer)
-        waiting.delete(message.id)
-        settle(q.entry)
+        if (q.from.size < q.sent.size) report(q.entry, false)
+        else finish(message.id)
     }
 
     function handle(message, wire) {
         if (message.type === 'open') {
-            const peer = { nonce: randomHex(32), offer: null, trusted: false, hint: null, version: 0, parts: null, changing: null }
+            const peer = {
+                nonce: randomHex(32),
+                offer: null,
+                trusted: false,
+                hint: null,
+                version: 0,
+                parts: null,
+                changing: null
+            }
             peers.set(wire, peer)
             wire.once?.('close', () => peers.delete(wire))
             return send(wire, json(TYPE.HELLO, { nonce: peer.nonce }))
@@ -478,7 +619,7 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
         const peer = peers.get(wire)
         if (!peer) return
         if (message.type === TYPE.OFFER) return onOffer(message, wire, peer)
-        if (message.type === TYPE.PART) return onPart(message, wire, peer)
+        if (message.type === TYPE.PART) return onPart(message, peer)
         if (message.type === TYPE.CHANGES) return onChanges(message, peer)
         if (message.type === TYPE.ANSWER) return onAnswer(message, wire)
         // Too old to answer: a new offer follows, and with it a new hint.
@@ -489,15 +630,23 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
     }
 
     // The peers a question can go to now.
-    const ready = () => [...peers].filter(([wire, peer]) => peer.hint && speaks(wire))
+    const ready = () =>
+        [...peers].filter(([wire, peer]) => peer.hint && speaks(wire))
 
     // Continuations with digits, links or addresses, kept only where two
     // peers agree.
     function careful(answers) {
         if (!cautious) return answers
         const agree = new Map()
-        for (const a of answers) for (const [text] of a.spans) agree.set(text, (agree.get(text) || 0) + 1)
-        return answers.map((a) => ({ ...a, spans: a.spans.filter(([text]) => !RISKY.test(text) || agree.get(text) >= 2) }))
+        for (const a of answers)
+            for (const [text] of a.spans)
+                agree.set(text, (agree.get(text) || 0) + 1)
+        return answers.map((a) => ({
+            ...a,
+            spans: a.spans.filter(
+                ([text]) => !RISKY.test(text) || agree.get(text) >= 2
+            )
+        }))
     }
 
     // What an entry's records say about a question (its partial word may be
@@ -505,24 +654,42 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
     // for less in the vote, but the memory as a whole counts as fully as the
     // chat's own (w 1), pinned peers there or not.
     function memoryOf(entry, asked) {
-        const answers = [...entry.records].map(([wire, record]) => ({ ...match(record, asked), w: pinned.length && !peers.get(wire)?.trusted ? UNPINNED : 1 }))
+        const answers = [...entry.records].map(([wire, record]) => ({
+            ...match(record, asked),
+            w: pinned.length && !peers.get(wire)?.trusted ? UNPINNED : 1
+        }))
         const memory = merge(careful(answers))
         return memory.L ? { ...memory, w: 1 } : null
     }
 
-    const heard = (entry) => entry.waiters.forEach((w) => w.tell(memoryOf(entry, w.asked), false))
+    const report = (entry, done) =>
+        entry.waiters.forEach((w) => w.tell(memoryOf(entry, w.asked), done))
 
     function settle(entry) {
         if (entry.done) return
         entry.done = true
         entry.at = Date.now()
-        for (const w of entry.waiters) w.tell(memoryOf(entry, w.asked), true)
+        report(entry, true)
         entry.waiters.clear()
+    }
+
+    // A query done with, all its peers answered or not.
+    function finish(id) {
+        const q = waiting.get(id)
+        clearTimeout(q.timer)
+        waiting.delete(id)
+        settle(q.entry)
     }
 
     // An entry still good: answered by every peer ready now, at its
     // version, not long ago (one that timed out is fetched again).
-    const fresh = (entry) => Date.now() - entry.at < FRESH && ready().every(([wire, peer]) => entry.versions.get(wire) === peer.version && entry.records.has(wire))
+    const fresh = (entry) =>
+        Date.now() - entry.at < FRESH &&
+        ready().every(
+            ([wire, peer]) =>
+                entry.versions.get(wire) === peer.version &&
+                entry.records.has(wire)
+        )
 
     // The entry for a question's key: kept if in flight or fresh, else
     // fetched anew. Only the latest waits for a mask; an older one waiting is
@@ -530,7 +697,14 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
     function fetch(asked) {
         const kept = fetched.get(asked.hash)
         if (kept && (!kept.done || fresh(kept))) return kept
-        const entry = { asked, versions: new Map(), records: new Map(), done: false, at: Date.now(), waiters: new Set() }
+        const entry = {
+            asked,
+            versions: new Map(),
+            records: new Map(),
+            done: false,
+            at: Date.now(),
+            waiters: new Set()
+        }
         fetched.delete(asked.hash)
         fetched.set(asked.hash, entry)
         while (fetched.size > KEEP) fetched.delete(fetched.keys().next().value)
@@ -551,32 +725,29 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
         if (!to.length) return settle(entry)
         const masked = masks.shift()
         fill()
-        if (!masked) {
-            queued = entry
-            return
-        }
+        if (!masked) return void (queued = entry)
         counts.asked++
-        const query = select(masked, entry.asked.hash % shape.cols)
         const id = ++next
-        const q = { entry, mask: masked, sent: new Map(), from: new Set(), timer: null }
+        const q = {
+            entry,
+            mask: masked,
+            sent: new Map(),
+            from: new Set(),
+            timer: null
+        }
         waiting.set(id, q)
-        const body = toBytes(query)
-        const total = Math.ceil(body.length / PART_BYTES)
+        const body = toBytes(select(masked, entry.asked.hash % shape.cols))
         for (const [wire, peer] of to) {
-            let sent = true
-            for (let index = 0; index < total && sent; index++) sent = send(wire, frame(TYPE.QUERY, [id, peer.version, index, total], body.subarray(index * PART_BYTES, (index + 1) * PART_BYTES)))
-            if (!sent) continue
-            q.sent.set(wire, { v: peer.version, hint: peer.hint, groups: peer.offer.groups })
+            if (!sendParts(wire, TYPE.QUERY, [id, peer.version], body)) continue
+            q.sent.set(wire, {
+                v: peer.version,
+                hint: peer.hint,
+                groups: peer.offer.groups
+            })
             entry.versions.set(wire, peer.version)
         }
-        if (!q.sent.size) {
-            waiting.delete(id)
-            return settle(entry)
-        }
-        q.timer = setTimeout(() => {
-            waiting.delete(id)
-            settle(entry)
-        }, WAIT)
+        if (!q.sent.size) return finish(id)
+        q.timer = setTimeout(() => finish(id), WAIT)
     }
 
     function ask(context, update) {
@@ -601,7 +772,20 @@ export function createAsker({ pinned = [], pinnedOnly = false, cautious = false,
         if (asked && ready().length) fetch(asked)
     }
 
-    const status = () => ({ peers: peers.size, ready: ready().length, trusted: ready().filter(([, p]) => p.trusted).length, masks: masks.length, ...counts })
+    const status = () => ({
+        peers: peers.size,
+        ready: ready().length,
+        trusted: ready().filter(([, p]) => p.trusted).length,
+        masks: masks.length,
+        ...counts
+    })
 
-    return { handle, ask, prefetch, fill, status, ready: () => ready().length > 0 }
+    return {
+        handle,
+        ask,
+        prefetch,
+        fill,
+        status,
+        ready: () => ready().length > 0
+    }
 }

@@ -12,23 +12,28 @@ const STORED = 'identity' // localStorage: the secret
 
 let keys = null
 
-// At /connect: this browser's keys, made the first time. Null when the
-// browser cannot sign (no Ed25519), which keeps it out of the rooms: every
-// message must be signed.
+// A random hex secret kept in this browser under `key`, made the first
+// time. A browser may refuse storage outright (some privacy settings throw
+// on any use of it): then a new secret each visit.
+export function keptSecret(key, length) {
+    try {
+        const kept = localStorage.getItem(key)
+        if (kept) return kept
+        const secret = randomHex(length)
+        localStorage.setItem(key, secret)
+        return secret
+    } catch {
+        return randomHex(length)
+    }
+}
+
+// At start: this browser's keys, made the first time. Null when the browser
+// cannot sign (no Ed25519), which keeps it out of the rooms: every message
+// must be signed.
 export async function signIn() {
     if (keys) return keys
-    let secret = null
     try {
-        secret = localStorage.getItem(STORED)
-    } catch {}
-    if (!secret) {
-        secret = randomHex(128)
-        try {
-            localStorage.setItem(STORED, secret)
-        } catch {}
-    }
-    try {
-        keys = await keysFor(secret)
+        keys = await keysFor(keptSecret(STORED, 128))
     } catch (err) {
         console.error(err)
         say(t('id.unsupported'))

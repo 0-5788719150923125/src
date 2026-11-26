@@ -9,34 +9,68 @@ import fs from 'node:fs'
 
 const BITRATES = {
     // [version][layer] -> kbit/s by index; version 1 is MPEG-1, 2 is 2 and 2.5
-    1: { 1: [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448], 2: [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384], 3: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320] },
-    2: { 1: [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256], 2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160], 3: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160] }
+    1: {
+        1: [
+            0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448
+        ],
+        2: [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
+        3: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
+    },
+    2: {
+        1: [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+        2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+        3: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160]
+    }
 }
-const RATES = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] } // by version bits
+const RATES = {
+    3: [44100, 48000, 32000],
+    2: [22050, 24000, 16000],
+    0: [11025, 12000, 8000]
+} // by version bits
 
 // The frame header at `at`, or null.
 function frame(buf, at) {
-    if (at + 4 > buf.length || buf[at] !== 0xff || (buf[at + 1] & 0xe0) !== 0xe0) return null
+    if (
+        at + 4 > buf.length ||
+        buf[at] !== 0xff ||
+        (buf[at + 1] & 0xe0) !== 0xe0
+    )
+        return null
     const versionBits = (buf[at + 1] >> 3) & 3 // 3: MPEG-1, 2: MPEG-2, 0: MPEG-2.5
     const layerBits = (buf[at + 1] >> 1) & 3 // 3: layer I, 2: II, 1: III
     const bitrateIndex = buf[at + 2] >> 4
     const rateIndex = (buf[at + 2] >> 2) & 3
-    if (versionBits === 1 || layerBits === 0 || bitrateIndex === 0 || bitrateIndex === 15 || rateIndex === 3) return null
+    if (
+        versionBits === 1 ||
+        layerBits === 0 ||
+        bitrateIndex === 0 ||
+        bitrateIndex === 15 ||
+        rateIndex === 3
+    )
+        return null
     const version = versionBits === 3 ? 1 : 2
     const layer = 4 - layerBits
     const bitrate = BITRATES[version][layer][bitrateIndex] * 1000
     const sampleRate = RATES[versionBits][rateIndex]
     const padding = (buf[at + 2] >> 1) & 1
     const mono = buf[at + 3] >> 6 === 3
-    const samples = layer === 1 ? 384 : layer === 3 && version === 2 ? 576 : 1152
-    const length = layer === 1 ? (Math.floor((12 * bitrate) / sampleRate) + padding) * 4 : Math.floor(((samples / 8) * bitrate) / sampleRate) + padding
+    const samples =
+        layer === 1 ? 384 : layer === 3 && version === 2 ? 576 : 1152
+    const length =
+        layer === 1
+            ? (Math.floor((12 * bitrate) / sampleRate) + padding) * 4
+            : Math.floor(((samples / 8) * bitrate) / sampleRate) + padding
     return { version, layer, sampleRate, samples, mono, length }
 }
 
 // Where the audio starts: after an ID3v2 tag, if there is one.
 function audioStart(buf) {
     if (buf.toString('latin1', 0, 3) !== 'ID3') return 0
-    const size = ((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f)
+    const size =
+        ((buf[6] & 0x7f) << 21) |
+        ((buf[7] & 0x7f) << 14) |
+        ((buf[8] & 0x7f) << 7) |
+        (buf[9] & 0x7f)
     return 10 + size + (buf[5] & 0x10 ? 10 : 0)
 }
 
@@ -69,7 +103,7 @@ export function mp3Duration(file) {
     // No header: count the frames.
     let frames = 0
     let seconds = 0
-    for (let pos = at; ; ) {
+    for (let pos = at; ;) {
         const next = frame(buf, pos)
         if (!next) break
         frames++

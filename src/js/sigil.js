@@ -19,7 +19,10 @@ export async function createSigil(agentId) {
 
 // One, two or four syllables, as an SVG string. Each tile is 128 units
 // square; they sit side by side, then wrap, scaled together to `size`.
-export async function drawSigil(syllables, { size = 128, colors: [bg, fg] = ['#000', '#fff'], className = '' } = {}) {
+export async function drawSigil(
+    syllables,
+    { size = 128, colors: [bg, fg] = ['#000', '#fff'], className = '' } = {}
+) {
     const { TILES } = await import('./sigil-tiles.js')
     const scale = (syllables.length === 1 ? size : size / 2) / 128
     const strokeWidth = `${size / 128 + 0.33}px`
@@ -29,8 +32,14 @@ export async function drawSigil(syllables, { size = 128, colors: [bg, fg] = ['#0
     // Attributes keep their order; new ones go last.
     const paint = (tile) =>
         tile.replace(/<(\w+) ([^>]*)\/>/g, (_, name, list) => {
-            const attrs = new Map(Array.from(list.matchAll(/([\w-]+)="([^"]*)"/g), (m) => [m[1], m[2]]))
-            if (attrs.get('fill') !== 'none') attrs.set('fill', color(attrs.get('fill')))
+            const attrs = new Map(
+                Array.from(list.matchAll(/([\w-]+)="([^"]*)"/g), (m) => [
+                    m[1],
+                    m[2]
+                ])
+            )
+            if (attrs.get('fill') !== 'none')
+                attrs.set('fill', color(attrs.get('fill')))
             if (attrs.has('stroke')) {
                 attrs.set('stroke', color(attrs.get('stroke')))
                 attrs.set('stroke-width', strokeWidth)
@@ -52,6 +61,7 @@ export async function drawSigil(syllables, { size = 128, colors: [bg, fg] = ['#0
     )
 }
 
+// prettier-ignore
 const prefixes = [
     'doz', 'mar', 'bin', 'wan', 'sam', 'lit', 'sig', 'hid', 'fid', 'lis', 'sog',
     'dir', 'wac', 'sab', 'wis', 'sib', 'rig', 'sol', 'dop', 'mod', 'fog', 'lid',
@@ -79,6 +89,7 @@ const prefixes = [
     'mat', 'mip', 'fip'
 ]
 
+// prettier-ignore
 const suffixes = [
     'zod', 'nec', 'bud', 'wes', 'sev', 'per', 'sut', 'let', 'ful', 'pen', 'syt',
     'dur', 'wep', 'ser', 'wyl', 'sun', 'ryp', 'syx', 'dyr', 'nup', 'heb', 'peg',

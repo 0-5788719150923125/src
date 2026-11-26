@@ -5,8 +5,8 @@
 // OTHER_ROOM), and it answers this tab's own questions the same way.
 //
 // The newest ROOM_CHARS of each room are kept, for the ROOMS rooms used
-// last. Password rooms are never kept. Rooms have never had a history; with
-// this, their past can surface as suggestions to people who were not there.
+// last. Rooms have never had a history; with this, their past can surface as
+// suggestions to people who were not there.
 //
 // Lines are judged by the quality rules (quality.js): a line whose signs of
 // noise (mashing, shouting, repetition, links...) add up to NOISE or less
@@ -43,7 +43,9 @@ function save() {
     saving = setTimeout(() => {
         try {
             localStorage.setItem(KEY, JSON.stringify(rooms))
-        } catch {}
+        } catch (err) {
+            console.warn('library: the chat was not kept:', err.message)
+        }
     }, 1000)
 }
 
@@ -53,8 +55,11 @@ export function remember(room, line) {
     kept.lines.push(line)
     kept.used = Date.now()
     let chars = kept.lines.reduce((sum, l) => sum + l.length + 1, 0)
-    while (chars > ROOM_CHARS && kept.lines.length > 1) chars -= kept.lines.shift().length + 1
-    for (const name of Object.keys(rooms).sort((a, b) => rooms[b].used - rooms[a].used).slice(ROOMS)) {
+    while (chars > ROOM_CHARS && kept.lines.length > 1)
+        chars -= kept.lines.shift().length + 1
+    for (const name of Object.keys(rooms)
+        .sort((a, b) => rooms[b].used - rooms[a].used)
+        .slice(ROOMS)) {
         delete rooms[name]
         indexes.delete(name)
     }
@@ -66,7 +71,10 @@ export function remember(room, line) {
 // Every room this browser keeps, and its lines, oldest first: what it
 // answers private questions from (answering.js), whatever room they came
 // through.
-export const snapshot = () => Object.fromEntries(Object.entries(rooms).map(([name, room]) => [name, room.lines]))
+export const snapshot = () =>
+    Object.fromEntries(
+        Object.entries(rooms).map(([name, room]) => [name, room.lines])
+    )
 
 // Called after each line kept.
 export const watch = (watcher) => watchers.add(watcher)
@@ -91,7 +99,9 @@ function indexOf(name) {
             starts.push(at)
             at += line.length + 1
         }
-        const weights = lines.map((line) => FLOOR + (1 - FLOOR) * evaluate(quality, line).score)
+        const weights = lines.map(
+            (line) => FLOOR + (1 - FLOOR) * evaluate(quality, line).score
+        )
         // The line a position falls in, by binary search over the starts.
         const weigh = (position) => {
             let lo = 0
@@ -114,7 +124,10 @@ export function answer(context, current) {
     return combine(
         Object.keys(rooms).map((name) => {
             const room = indexOf(name)
-            return { ...lookup(room, context, room.weigh), w: name === current ? 1 : OTHER_ROOM }
+            return {
+                ...lookup(room, context, room.weigh),
+                w: name === current ? 1 : OTHER_ROOM
+            }
         })
     )
 }

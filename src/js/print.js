@@ -13,7 +13,9 @@ import { formatDate } from './time.js'
 const columns = (items, count) => {
     const out = []
     for (let c = 0, at = 0; c < count; c++) {
-        const size = Math.floor(items.length / count) + (c < items.length % count ? 1 : 0)
+        const size =
+            Math.floor(items.length / count) +
+            (c < items.length % count ? 1 : 0)
         out.push(items.slice(at, (at += size)))
     }
     return out.filter((column) => column.length)
@@ -25,7 +27,8 @@ export const SPEAKERS = {
     pen: { symbol: '>', name: 'PEN', location: 'ROOT', color: 'root' } // the model in this tab
 }
 
-export const handle = ({ symbol, name, location }) => `${symbol} ${name}@${location}:`
+export const handle = ({ symbol, name, location }) =>
+    `${symbol} ${name}@${location}:`
 
 const MAX_LINES = 1000
 const output = document.querySelector('#container output')
@@ -41,7 +44,9 @@ export const printElsewhere = (to) => (elsewhere = to)
 // followed.
 let atBottom = true
 window.addEventListener('scroll', () => {
-    atBottom = window.scrollY + (window.visualViewport?.height ?? window.innerHeight) > page() - 300
+    atBottom =
+        window.scrollY + (window.visualViewport?.height ?? window.innerHeight) >
+        page() - 300
 })
 
 const el = (tag, className, ...children) => {
@@ -60,22 +65,38 @@ const el = (tag, className, ...children) => {
 //   block      starts the body on a line of its own
 //   scroll     'always' (the default), 'follow' (only a reader already at
 //              the bottom), or 'never'
-export function print(speaker, body, { block = false, scroll = 'always' } = {}) {
+export function print(
+    speaker,
+    body,
+    { block = false, scroll = 'always' } = {}
+) {
     if (elsewhere) return elsewhere(speaker, body, { block, scroll })
     const text = el('span', 'text')
     if (block) text.style.display = 'block'
     if (typeof body === 'string') text.textContent = body
     else if (body.html !== undefined) text.innerHTML = body.html
-    else if (body.list) text.append(el('div', 'help', ...columns(body.list, 3).map((items) => el('ul', null, ...items.map((item) => el('li', null, item))))))
+    else if (body.list)
+        text.append(
+            el(
+                'div',
+                'help',
+                ...columns(body.list, 3).map((items) =>
+                    el('ul', null, ...items.map((item) => el('li', null, item)))
+                )
+            )
+        )
     else text.append(el('span', 'tooltip', body.tooltip), body.text)
 
     const line = el('div', 'content')
-    if (speaker) line.append(el('span', `handle ${speaker.color}`, handle(speaker)))
+    if (speaker)
+        line.append(el('span', `handle ${speaker.color}`, handle(speaker)))
     line.append(text)
     output.append(line)
-    while (output.childElementCount > MAX_LINES) output.firstElementChild.remove()
+    while (output.childElementCount > MAX_LINES)
+        output.firstElementChild.remove()
 
-    if (scroll === 'always' || (scroll === 'follow' && atBottom)) window.scrollTo(0, page())
+    if (scroll === 'always' || (scroll === 'follow' && atBottom))
+        window.scrollTo(0, page())
     return line
 }
 
@@ -85,7 +106,9 @@ export const say = (body, options) => print(SPEAKERS.fold, body, options)
 export const clear = () => output.replaceChildren()
 
 // Links open in a new tab, so the terminal is never navigated away from.
-export const link = (href, label) => ({ html: `<a href="${escape(href)}" target="_blank" rel="noopener">${escape(label)}</a>` })
+export const link = (href, label) => ({
+    html: `<a href="${escape(href)}" target="_blank" rel="noopener">${escape(label)}</a>`
+})
 
 // Art, a title, the date, and where to start.
 export const banner = (art, title) => ({

@@ -29,13 +29,22 @@ import WebTorrent from 'webtorrent'
 import parseTorrent, { toTorrentFile } from 'parse-torrent'
 import { describePorts, webrtc } from './webrtc.js'
 // Shared with the browser, so both derive the same room torrents.
-import { chatExtension, createGossip, relay, roomFile } from '../../src/js/room.js'
+import {
+    chatExtension,
+    createGossip,
+    relay,
+    roomFile
+} from '../../src/js/room.js'
 
 const RADIO_DIR = process.env.RADIO_DIR || '/radio'
 const TORRENTS_DIR = process.env.TORRENTS_DIR || '/torrents'
 const CACHE_DIR = process.env.CACHE_DIR || '/cache'
 const HEARTBEAT = process.env.HEARTBEAT || '/tmp/alive'
-const list = (value) => (value || '').split(',').map((s) => s.trim()).filter(Boolean)
+const list = (value) =>
+    (value || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
 const ANNOUNCE = list(process.env.ANNOUNCE)
 const TRACKERS = [...list(process.env.TRACKERS), ...ANNOUNCE]
 const CHATS = list(process.env.CHATS ?? 'trade')
@@ -43,8 +52,6 @@ const SITE_URL = (process.env.SITE_URL || '').trim().replace(/\/+$/, '')
 const MIRROR_URL = (process.env.MIRROR_URL || '').trim().replace(/\/+$/, '')
 const REFRESH = (Number(process.env.STATION_REFRESH) || 6) * 3600000
 const RETRY = 10 * 60000
-
-
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 
 // WebRTC's UDP ports (WEBRTC_PORTS) and the guard that keeps a full range
@@ -53,9 +60,20 @@ const { portRange, rtcConfig, connections } = await webrtc()
 
 // UPLOAD_LIMIT caps what this peer uploads, in KiB/s (0 or unset: no cap);
 // the swarm makes up the rest.
-const uploadLimit = Number(process.env.UPLOAD_LIMIT) > 0 ? Number(process.env.UPLOAD_LIMIT) * 1024 : -1
+const uploadLimit =
+    Number(process.env.UPLOAD_LIMIT) > 0
+        ? Number(process.env.UPLOAD_LIMIT) * 1024
+        : -1
 
-const client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false, tracker: { rtcConfig }, uploadLimit })
+const client = new WebTorrent({
+    dht: false,
+    lsd: false,
+    utp: false,
+    natUpnp: false,
+    natPmp: false,
+    tracker: { rtcConfig },
+    uploadLimit
+})
 client.on('error', (err) => log('error:', err.message || err))
 log(
     `webrtc: ${describePorts(portRange, connections)}; ` +
@@ -71,13 +89,18 @@ class ReadOnlyStore {
     constructor(chunkLength, { files, path: root, length }) {
         this.chunkLength = Number(chunkLength)
         this.length = length
-        this.files = files.map((file) => ({ path: path.join(root, file.path), offset: file.offset, length: file.length }))
+        this.files = files.map((file) => ({
+            path: path.join(root, file.path),
+            offset: file.offset,
+            length: file.length
+        }))
         this.handles = new Map()
         this.closed = false
     }
 
     open(file) {
-        if (!this.handles.has(file.path)) this.handles.set(file.path, fs.promises.open(file.path, 'r'))
+        if (!this.handles.has(file.path))
+            this.handles.set(file.path, fs.promises.open(file.path, 'r'))
         return this.handles.get(file.path)
     }
 
@@ -89,20 +112,30 @@ class ReadOnlyStore {
             const to = Math.min(end, file.offset + file.length)
             if (from >= to) continue
             const handle = await this.open(file)
-            const { bytesRead } = await handle.read(out, from - start, to - from, from - file.offset)
-            if (bytesRead !== to - from) throw new Error(`${file.path}: short read`)
+            const { bytesRead } = await handle.read(
+                out,
+                from - start,
+                to - from,
+                from - file.offset
+            )
+            if (bytesRead !== to - from)
+                throw new Error(`${file.path}: short read`)
         }
         return out
     }
 
     get(index, opts, cb) {
         if (typeof opts === 'function') [opts, cb] = [null, opts]
-        if (this.closed) return queueMicrotask(() => cb(new Error('Storage is closed')))
+        if (this.closed)
+            return queueMicrotask(() => cb(new Error('Storage is closed')))
         const chunkStart = index * this.chunkLength
         const chunkEnd = Math.min(chunkStart + this.chunkLength, this.length)
         const start = chunkStart + (opts?.offset || 0)
         const end = opts?.length != null ? start + opts.length : chunkEnd
-        this.read(start, Math.min(end, chunkEnd)).then((buf) => cb(null, buf), cb)
+        this.read(start, Math.min(end, chunkEnd)).then(
+            (buf) => cb(null, buf),
+            cb
+        )
     }
 
     put(index, buf, cb) {
@@ -111,8 +144,17 @@ class ReadOnlyStore {
 
     close(cb) {
         this.closed = true
-        Promise.all([...this.handles.values()].map((handle) => handle.then((h) => h.close(), () => {})))
-            .then(() => cb?.(null), (err) => cb?.(err))
+        Promise.all(
+            [...this.handles.values()].map((handle) =>
+                handle.then(
+                    (h) => h.close(),
+                    () => {}
+                )
+            )
+        ).then(
+            () => cb?.(null),
+            (err) => cb?.(err)
+        )
     }
 
     // Never deletes the station.
@@ -130,10 +172,16 @@ const seed = (input, opts) =>
 async function seedStation(frequency) {
     const folder = path.join(RADIO_DIR, frequency)
     log(`station ${frequency}: hashing ${folder}`)
-    const torrent = await seed(folder, { name: frequency, announce: TRACKERS, store: ReadOnlyStore })
+    const torrent = await seed(folder, {
+        name: frequency,
+        announce: TRACKERS,
+        store: ReadOnlyStore
+    })
     const file = toTorrentFile({ ...torrent, announce: ANNOUNCE, urlList: [] })
     fs.writeFileSync(path.join(TORRENTS_DIR, `${frequency}.torrent`), file)
-    log(`station ${frequency}: seeding ${torrent.files.length} files as ${torrent.infoHash}`)
+    log(
+        `station ${frequency}: seeding ${torrent.files.length} files as ${torrent.infoHash}`
+    )
     return torrent
 }
 
@@ -141,20 +189,34 @@ async function seedStation(frequency) {
 const hasFiles = (dir) =>
     fs
         .readdirSync(dir, { withFileTypes: true })
-        .some((entry) => !entry.name.startsWith('.') && (entry.isFile() || (entry.isDirectory() && hasFiles(path.join(dir, entry.name)))))
+        .some(
+            (entry) =>
+                !entry.name.startsWith('.') &&
+                (entry.isFile() ||
+                    (entry.isDirectory() &&
+                        hasFiles(path.join(dir, entry.name))))
+        )
 
 // The station's .torrent as the deployed site bundles it. Pages answers a
 // missing file with the home page, so what comes back must parse.
 async function siteTorrent(frequency) {
     const url = `${SITE_URL}/radio/${encodeURIComponent(frequency)}.torrent`
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) }).catch((err) => {
-        throw new Error(`${url}: ${err.cause?.code || err.cause?.message || err.message}`)
-    })
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) }).catch(
+        (err) => {
+            throw new Error(
+                `${url}: ${err.cause?.code || err.cause?.message || err.message}`
+            )
+        }
+    )
     if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
     const buf = Buffer.from(await res.arrayBuffer())
     const parsed = await parseTorrent(buf).catch(() => null)
-    if (!parsed?.files?.length) throw new Error(`${url}: not a station's .torrent`)
-    if (parsed.name !== frequency) throw new Error(`${url}: the torrent is named ${parsed.name}, not ${frequency}`)
+    if (!parsed?.files?.length)
+        throw new Error(`${url}: not a station's .torrent`)
+    if (parsed.name !== frequency)
+        throw new Error(
+            `${url}: the torrent is named ${parsed.name}, not ${frequency}`
+        )
     return { buf, parsed }
 }
 
@@ -170,20 +232,33 @@ async function keptTorrent(frequency) {
 // Fetch (or keep) a version of a station; `current` is the one this
 // process holds, if any.
 async function fetchStation(frequency, current, { buf, parsed }) {
-    if (current && !current.destroyed && current.infoHash === parsed.infoHash) return current
+    if (current && !current.destroyed && current.infoHash === parsed.infoHash)
+        return current
     if (current && !current.destroyed) {
         log(`station ${frequency}: the site has a new version`)
-        await new Promise((resolve) => client.remove(current, { destroyStore: false }, resolve).catch(resolve))
+        await new Promise((resolve) =>
+            client
+                .remove(current, { destroyStore: false }, resolve)
+                .catch(resolve)
+        )
     }
     const published = path.join(TORRENTS_DIR, `${frequency}.torrent`)
     fs.rmSync(published, { force: true })
     const urlList = MIRROR_URL ? [`${MIRROR_URL}/${parsed.infoHash}/`] : []
-    log(`station ${frequency}: fetching ${parsed.infoHash} from the swarm${MIRROR_URL ? ` and ${MIRROR_URL}` : ''} into ${CACHE_DIR}`)
-    const torrent = client.add(buf, { path: CACHE_DIR, announce: TRACKERS, urlList })
+    log(
+        `station ${frequency}: fetching ${parsed.infoHash} from the swarm${MIRROR_URL ? ` and ${MIRROR_URL}` : ''} into ${CACHE_DIR}`
+    )
+    const torrent = client.add(buf, {
+        path: CACHE_DIR,
+        announce: TRACKERS,
+        urlList
+    })
     torrent.once('done', () => {
         fs.writeFileSync(published, buf)
         prune(frequency, torrent)
-        log(`station ${frequency}: whole, seeding ${torrent.files.length} files as ${torrent.infoHash}`)
+        log(
+            `station ${frequency}: whole, seeding ${torrent.files.length} files as ${torrent.infoHash}`
+        )
     })
     // Ready once what the cache already holds is checked.
     await new Promise((resolve, reject) => {
@@ -196,12 +271,16 @@ async function fetchStation(frequency, current, { buf, parsed }) {
 // Delete what the cache holds of a station that its torrent does not have.
 function prune(frequency, torrent) {
     const dir = path.join(CACHE_DIR, frequency)
-    const keep = new Set(torrent.files.map((file) => path.join(CACHE_DIR, file.path)))
+    const keep = new Set(
+        torrent.files.map((file) => path.join(CACHE_DIR, file.path))
+    )
     for (const name of fs.readdirSync(dir, { recursive: true })) {
         const file = path.join(dir, name)
         if (keep.has(file) || !fs.statSync(file).isFile()) continue
         fs.rmSync(file)
-        log(`station ${frequency}: deleted ${name}, which the station no longer has`)
+        log(
+            `station ${frequency}: deleted ${name}, which the station no longer has`
+        )
     }
 }
 
@@ -212,13 +291,26 @@ function keepFetched(frequency) {
     const tick = async () => {
         let wait = REFRESH
         try {
-            stations.set(frequency, await fetchStation(frequency, stations.get(frequency), await siteTorrent(frequency)))
+            stations.set(
+                frequency,
+                await fetchStation(
+                    frequency,
+                    stations.get(frequency),
+                    await siteTorrent(frequency)
+                )
+            )
         } catch (err) {
-            log(`station ${frequency}: ${err.message || err}; trying again in ${RETRY / 60000} minutes`)
+            log(
+                `station ${frequency}: ${err.message || err}; trying again in ${RETRY / 60000} minutes`
+            )
             wait = RETRY
-            const kept = !stations.has(frequency) && (await keptTorrent(frequency).catch(() => null))
+            const kept =
+                !stations.has(frequency) &&
+                (await keptTorrent(frequency).catch(() => null))
             if (kept) {
-                log(`station ${frequency}: meanwhile, seeding the version kept here`)
+                log(
+                    `station ${frequency}: meanwhile, seeding the version kept here`
+                )
                 await fetchStation(frequency, null, kept).then(
                     (torrent) => stations.set(frequency, torrent),
                     (err) => log(`station ${frequency}: ${err.message || err}`)
@@ -244,7 +336,11 @@ async function joinRoom(room) {
 // One folder per station (compose.yaml mounts one per frequency, empty when
 // its STATION_ variable is unset).
 const folders = fs.existsSync(RADIO_DIR)
-    ? fs.readdirSync(RADIO_DIR).filter((name) => fs.statSync(path.join(RADIO_DIR, name)).isDirectory())
+    ? fs
+          .readdirSync(RADIO_DIR)
+          .filter((name) =>
+              fs.statSync(path.join(RADIO_DIR, name)).isDirectory()
+          )
     : []
 if (!folders.length) log(`no stations under ${RADIO_DIR}`)
 fs.mkdirSync(TORRENTS_DIR, { recursive: true })
@@ -255,7 +351,10 @@ for (const frequency of folders) {
     const folder = path.join(RADIO_DIR, frequency)
     if (!hasFiles(folder)) {
         if (SITE_URL) keepFetched(frequency)
-        else log(`station ${frequency}: no files in ${folder}, and no SITE_URL to fetch them from`)
+        else
+            log(
+                `station ${frequency}: no files in ${folder}, and no SITE_URL to fetch them from`
+            )
         continue
     }
     try {
@@ -269,11 +368,19 @@ for (const frequency of folders) {
 setInterval(() => {
     fs.writeFileSync(HEARTBEAT, String(Date.now()))
     const peers = (torrents) =>
-        torrents.map((t) => (t.done || t.destroyed ? t.numPeers : `${t.numPeers} (${Math.floor(t.progress * 100)}%)`)).join('/')
+        torrents
+            .map((t) =>
+                t.done || t.destroyed
+                    ? t.numPeers
+                    : `${t.numPeers} (${Math.floor(t.progress * 100)}%)`
+            )
+            .join('/')
     log(
         `peers: chats ${peers(rooms) || '-'}, stations ${peers([...stations.values()]) || '-'}; ` +
             `uploaded ${(client.torrents.reduce((n, t) => n + t.uploaded, 0) / 1048576).toFixed(1)} MiB` +
-            (portRange ? `; webrtc ${connections.live}/${connections.limit}, ${connections.refused} refused` : '')
+            (portRange
+                ? `; webrtc ${connections.live}/${connections.limit}, ${connections.refused} refused`
+                : '')
     )
 }, 30000).unref?.()
 fs.writeFileSync(HEARTBEAT, String(Date.now()))

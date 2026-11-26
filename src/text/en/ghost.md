@@ -1,12 +1,13 @@
-<!-- The browser extension's ghost text: PEN@ROOT writing ahead of you in
-other sites' text fields (extension/page.js, extension/host.js), and the
-/ghost command that turns it on and off (extension/terminal.js). The site
-itself never prints these. "preamble" is read by the model before what is
-typed in a field, never printed. -->
+<!-- The browser extension's ghost text, written ahead of you in other
+sites' text fields (extension/page.js, extension/host.js), and the /ghost
+command that turns it on and off (extension/terminal.js). The site itself
+never prints these. "info" is the extension's welcome line, in place of the
+site's (pen.info). "preamble" is read by the model before what is typed in
+a field, never printed. -->
 
 # info
 
-PEN@ROOT also writes ahead of you in other sites' text fields, here in this browser. What you type there is never sent anywhere readable: it asks the swarm's memory with an encrypted question that no peer can read. Tab keeps a word, or hold it to keep them all; Escape hides the guess. Never in password, payment or address fields.
+INFO: An AI on your device finishes your thoughts, here and in any text field. Press Tab to keep a word, or hold it to keep them all.
 
 # usage
 

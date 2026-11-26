@@ -21,10 +21,22 @@ const CACHE_DIR = path.resolve(process.env.CACHE_DIR || '/cache')
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 
 const TYPES = {
-    '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg',
-    '.flac': 'audio/flac', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.wav': 'audio/wav',
-    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
-    '.tif': 'image/tiff', '.tiff': 'image/tiff', '.pdf': 'application/pdf', '.txt': 'text/plain',
+    '.mp3': 'audio/mpeg',
+    '.ogg': 'audio/ogg',
+    '.oga': 'audio/ogg',
+    '.opus': 'audio/ogg',
+    '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+    '.wav': 'audio/wav',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
     '.torrent': 'application/x-bittorrent'
 }
 
@@ -32,7 +44,18 @@ const CORS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': 'Range, Cache-Control, Pragma, User-Agent',
-    'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges'
+    'Access-Control-Expose-Headers':
+        'Content-Length, Content-Range, Accept-Ranges'
+}
+
+// A path's stats, or null for any path that is not there to serve (missing,
+// or under something that is not a folder): a 404, never a crash.
+function statOf(file) {
+    try {
+        return fs.statSync(file)
+    } catch {
+        return null
+    }
 }
 
 // Map a URL path to a file on disk, or null. Nothing outside the two
@@ -45,47 +68,59 @@ function locate(urlPath) {
         return null
     }
     const torrent = /^\/radio\/([^/]+\.torrent)$/.exec(rel)
-    if (torrent) return { file: path.join(TORRENTS_DIR, torrent[1]), cache: 'no-cache' }
+    if (torrent)
+        return { file: path.join(TORRENTS_DIR, torrent[1]), cache: 'no-cache' }
     if (!rel.startsWith('/radio/')) return null
     const file = path.join(RADIO_DIR, rel.slice('/radio/'.length))
     if (!file.startsWith(RADIO_DIR + path.sep)) return null
-    const cached = path.join(CACHE_DIR, path.relative(RADIO_DIR, file))
-    const station = path.relative(RADIO_DIR, file).split(path.sep)[0]
-    const fetched = !fs.existsSync(file) && fs.existsSync(path.join(TORRENTS_DIR, `${station}.torrent`))
-    return { file: fetched ? cached : file, cache: 'public, max-age=3600' }
+    const inner = path.relative(RADIO_DIR, file)
+    const station = inner.split(path.sep)[0]
+    const fetched =
+        !fs.existsSync(file) &&
+        fs.existsSync(path.join(TORRENTS_DIR, `${station}.torrent`))
+    return {
+        file: fetched ? path.join(CACHE_DIR, inner) : file,
+        cache: 'public, max-age=3600'
+    }
 }
 
 function respond(req, res) {
     const { pathname } = new URL(req.url, 'http://localhost')
     if (pathname === '/health') return res.writeHead(200, CORS).end('ok\n')
     if (req.method === 'OPTIONS') return res.writeHead(204, CORS).end()
-    if (req.method !== 'GET' && req.method !== 'HEAD') return res.writeHead(405, CORS).end()
+    if (req.method !== 'GET' && req.method !== 'HEAD')
+        return res.writeHead(405, CORS).end()
 
     const target = locate(pathname)
-    let stat = null
-    try {
-        stat = target && fs.statSync(target.file)
-    } catch {}
-    if (!stat || !stat.isFile()) return res.writeHead(404, CORS).end()
+    const stat = target && statOf(target.file)
+    if (!stat?.isFile()) return res.writeHead(404, CORS).end()
 
     const headers = {
         ...CORS,
         'Accept-Ranges': 'bytes',
         'Cache-Control': target.cache,
-        'Content-Type': TYPES[path.extname(target.file).toLowerCase()] || 'application/octet-stream',
+        'Content-Type':
+            TYPES[path.extname(target.file).toLowerCase()] ||
+            'application/octet-stream',
         'Last-Modified': stat.mtime.toUTCString()
     }
     let start = 0
     let end = stat.size - 1
     let status = 200
-    const range = req.headers.range && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range)
+    const range =
+        req.headers.range && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range)
     if (range && (range[1] || range[2])) {
         if (range[1]) {
             start = Number(range[1])
             if (range[2]) end = Math.min(Number(range[2]), end)
         } else start = Math.max(stat.size - Number(range[2]), 0)
         if (start > end) {
-            return res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}` }).end()
+            return res
+                .writeHead(416, {
+                    ...headers,
+                    'Content-Range': `bytes */${stat.size}`
+                })
+                .end()
         }
         status = 206
         headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`
@@ -99,7 +134,9 @@ function respond(req, res) {
 }
 
 const server = http.createServer(respond)
-server.listen(PORT, '0.0.0.0', () => log(`web seed on http://0.0.0.0:${PORT}/radio/`))
+server.listen(PORT, '0.0.0.0', () =>
+    log(`web seed on http://0.0.0.0:${PORT}/radio/`)
+)
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
     process.on(signal, () => server.close(() => process.exit(0)))

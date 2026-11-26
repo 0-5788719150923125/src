@@ -14,8 +14,10 @@
 // prefix to look up, and each older character only narrows the range found
 // so far.
 //
-// Shared verbatim by the browser and the stack's test peers
-// (containers/node/peers.js). It imports nothing.
+// Shared verbatim by the browser and the stack's peers
+// (containers/node/peers.js).
+
+import { extension, json, readJson, send, speaks } from './wire.js'
 
 export const EXTENSION = 'src_memory'
 export const MAX_BYTES = 16384
@@ -37,7 +39,7 @@ export const OTHER_ROOM = 0.3
 // Matching ignores case, so "the" remembers "The"; what comes back is the
 // text as written. Lowercasing keeps every position where it was for plain
 // text (all the chat allows); where it would not, matching keeps case.
-const folded = (text) => {
+export const folded = (text) => {
     const lower = text.toLowerCase()
     return lower.length === text.length ? lower : text
 }
@@ -87,7 +89,12 @@ export function index(text) {
             if (j === 0) classes = 1
             else {
                 const a = sa[j - 1]
-                if (rank[a] !== rank[b] || (a + k < n ? rank[a + k] : 0) !== (b + k < n ? rank[b + k] : 0)) classes++
+                if (
+                    rank[a] !== rank[b] ||
+                    (a + k < n ? rank[a + k] : 0) !==
+                        (b + k < n ? rank[b + k] : 0)
+                )
+                    classes++
             }
             next[b] = classes
         }
@@ -95,6 +102,12 @@ export function index(text) {
     }
     return { text, R, sa }
 }
+
+const add = (counts, key, amount) =>
+    counts.set(key, (counts.get(key) || 0) + amount)
+
+// [text, count] pairs, most counted first.
+const ranked = (counts) => [...counts].sort((x, y) => y[1] - x[1])
 
 // The longest stretch of the text that ends the way `context` ends (L), and
 // the spans that followed it and every match within NEAR of it, up to the
@@ -105,134 +118,133 @@ export function index(text) {
 export function lookup({ text, R, sa }, context, weigh = null) {
     const n = sa.length
     const c = folded(context.slice(-CONTEXT))
-    let lo = 0
-    let hi = n
-    let L = 0
+    // The first suffix in [a, b) whose character at depth d is above `limit`
+    // (past the end of the text reads as -1).
+    const above = (a, b, d, limit) => {
+        while (a < b) {
+            const m = (a + b) >> 1
+            const p = sa[m] + d
+            if ((p < n ? R[p] : -1) <= limit) a = m + 1
+            else b = m
+        }
+        return a
+    }
     const ranges = [] // the matches of each length, as a range of the suffix array
-    const depth = Math.min(DEPTH, c.length)
-    for (let d = 0; d < depth; d++) {
+    for (let d = 0, lo = 0, hi = n; d < Math.min(DEPTH, c.length); d++) {
         const ch = c.charCodeAt(c.length - 1 - d)
-        let a = lo
-        let b = hi
-        while (a < b) {
-            const m = (a + b) >> 1
-            const p = sa[m] + d
-            if ((p < n ? R[p] : -1) < ch) a = m + 1
-            else b = m
-        }
-        const start = a
-        b = hi
-        while (a < b) {
-            const m = (a + b) >> 1
-            const p = sa[m] + d
-            if ((p < n ? R[p] : -1) <= ch) a = m + 1
-            else b = m
-        }
-        if (start === a) break
-        lo = start
-        hi = a
-        L = d + 1
+        lo = above(lo, hi, d, ch - 1)
+        hi = above(lo, hi, d, ch)
+        if (lo === hi) break
         ranges.push([lo, hi])
     }
+    const L = ranges.length
     if (L < MIN_MATCH) return { L, hits: 0, spans: [] }
-    ;[lo, hi] = ranges[Math.max(MIN_MATCH, Math.ceil(L * NEAR)) - 1]
+    const [lo, hi] = ranges[Math.max(MIN_MATCH, Math.ceil(L * NEAR)) - 1]
     const tally = new Map()
     const step = Math.max(1, Math.floor((hi - lo) / 64))
     for (let i = lo; i < hi; i += step) {
         const end = n - sa[i] // just after the match, in the text read forward
-        let span = text.slice(end, end + SPAN)
-        const cut = span.indexOf('\n')
-        if (cut >= 0) span = span.slice(0, cut)
-        if (span) tally.set(span, (tally.get(span) || 0) + (weigh ? weigh(end) : 1))
+        const span = text.slice(end, end + SPAN).split('\n')[0]
+        if (span) add(tally, span, weigh ? weigh(end) : 1)
     }
-    const spans = [...tally].filter(([, count]) => count > 0).sort((x, y) => y[1] - x[1]).slice(0, SPANS)
-    return { L, hits: hi - lo, spans }
+    return {
+        L,
+        hits: hi - lo,
+        spans: ranked(tally)
+            .filter(([, count]) => count > 0)
+            .slice(0, SPANS)
+    }
 }
 
 // ------------------------------------------------------------ answers
 
+// The answers worth hearing, whose match comes within a quarter of the
+// longest, and that longest match.
+function nearest(answers) {
+    const useful = answers.filter(
+        (a) => a && a.L >= MIN_MATCH && a.spans.length
+    )
+    const L = Math.max(0, ...useful.map((a) => a.L))
+    return { L, near: useful.filter((a) => a.L >= L * NEAR) }
+}
+
 // One peer's answer from many rooms' lookups: `found` holds each room's
-// { L, spans, w }, w being what that room's text counts for. The rooms whose
-// match comes within a quarter of the longest contribute, their counts
-// scaled by w; the answer counts for the best w among them.
+// { L, spans, w }, w being what that room's text counts for. The nearest
+// rooms contribute, their counts scaled by w; the answer counts for the best
+// w among them.
 export function combine(found) {
-    const useful = found.filter((a) => a && a.L >= MIN_MATCH && a.spans.length)
-    if (!useful.length) return null
-    const L = Math.max(...useful.map((a) => a.L))
-    const near = useful.filter((a) => a.L >= L * NEAR)
+    const { L, near } = nearest(found)
+    if (!near.length) return null
     const spans = new Map()
-    for (const a of near) for (const [text, count] of a.spans) spans.set(text, (spans.get(text) || 0) + count * a.w)
-    return { L, w: Math.max(...near.map((a) => a.w)), spans: [...spans].sort((x, y) => y[1] - x[1]).slice(0, SPANS) }
+    for (const a of near)
+        for (const [text, count] of a.spans) add(spans, text, count * a.w)
+    return {
+        L,
+        w: Math.max(...near.map((a) => a.w)),
+        spans: ranked(spans).slice(0, SPANS)
+    }
 }
 
 // An answer as received: { L, spans, w } with sane types and sizes, or
 // null. Answers without a w (the stack's test peers) count fully.
 export function clean(answer) {
-    if (!answer || typeof answer.L !== 'number' || !Array.isArray(answer.s)) return null
+    if (!answer || typeof answer.L !== 'number' || !Array.isArray(answer.s))
+        return null
     const spans = answer.s
-        .filter((s) => Array.isArray(s) && typeof s[0] === 'string' && s[0].length <= SPAN && s[1] > 0)
+        .filter(
+            (s) =>
+                Array.isArray(s) &&
+                typeof s[0] === 'string' &&
+                s[0].length <= SPAN &&
+                s[1] > 0
+        )
         .slice(0, SPANS)
         .map(([text, count]) => [text, Number(count)])
-    const w = typeof answer.w === 'number' && answer.w > 0 ? Math.min(answer.w, 1) : 1
+    const w =
+        typeof answer.w === 'number' && answer.w > 0 ? Math.min(answer.w, 1) : 1
     return { L: Math.min(Math.max(0, answer.L | 0), DEPTH), spans, w }
 }
 
-// Many peers' answers as one: the peers whose match comes within a quarter
-// of the longest vote, each with its weight, shared among its spans. The
-// result's w (their mean weight) scales how much the memory counts at all,
-// so a match only other rooms hold sways the guess less.
+// Many peers' answers as one: the nearest peers vote, each with its weight,
+// shared among its spans. The result's w (their mean weight) scales how much
+// the memory counts at all, so a match only other rooms hold sways the guess
+// less.
 export function merge(answers) {
-    const useful = answers.filter((a) => a && a.L >= MIN_MATCH && a.spans.length)
-    if (!useful.length) return { L: 0, peers: 0, w: 0, spans: [] }
-    const L = Math.max(...useful.map((a) => a.L))
-    const voters = useful.filter((a) => a.L >= L * NEAR)
+    const { L, near: voters } = nearest(answers)
+    if (!voters.length) return { L: 0, peers: 0, w: 0, spans: [] }
     const weights = voters.map((a) => a.w ?? 1)
     const total = weights.reduce((sum, w) => sum + w, 0)
     const merged = new Map()
     voters.forEach((a, i) => {
         const counted = a.spans.reduce((sum, [, count]) => sum + count, 0)
-        for (const [text, count] of a.spans) merged.set(text, (merged.get(text) || 0) + (count / counted) * (weights[i] / total))
+        for (const [text, count] of a.spans)
+            add(merged, text, (count / counted) * (weights[i] / total))
     })
-    return { L, peers: voters.length, w: total / voters.length, spans: [...merged].sort((x, y) => y[1] - x[1]) }
+    return {
+        L,
+        peers: voters.length,
+        w: total / voters.length,
+        spans: ranked(merged)
+    }
 }
 
 // How much the memory counts against the model, by match length: nothing
 // below MIN_MATCH, then more the longer the match (fitted, in tokens, on
 // held-out chat: about a third at a word or two, most of it past a dozen).
-export const weight = (L) => (L < MIN_MATCH ? 0 : Math.min(0.85, 0.15 + (L - MIN_MATCH) / 60))
+export const weight = (L) =>
+    L < MIN_MATCH ? 0 : Math.min(0.85, 0.15 + (L - MIN_MATCH) / 60)
 
 // ------------------------------------------------------------ the wire
-
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
 
 // A wire extension (BEP 10) that hands every message, as an object, to
 // onMessage. Questions are { q: id, c: context }; answers are
 // { a: id, L, s: spans }.
-export function memoryExtension(onMessage) {
-    function Memory(wire) {
-        this.wire = wire
-    }
-    Memory.prototype.name = EXTENSION
-    Memory.prototype.onMessage = function (buf) {
-        if (buf.length > MAX_BYTES) return
-        let message
-        try {
-            message = JSON.parse(decoder.decode(buf))
-        } catch {
-            return
-        }
-        if (message && typeof message === 'object') onMessage(message, this.wire)
-    }
-    return Memory
-}
+export const memoryExtension = (onMessage) =>
+    extension(EXTENSION, readJson(MAX_BYTES), onMessage)
 
-export const remembers = (wire) => !wire.destroyed && Boolean(wire.peerExtendedMapping?.[EXTENSION])
+export const remembers = (wire) => speaks(wire, EXTENSION)
 
 export function sendMemory(wire, message) {
-    if (!remembers(wire)) return false
-    const body = encoder.encode(JSON.stringify(message))
-    if (body.length > MAX_BYTES) return false
-    wire.extended(EXTENSION, body)
-    return true
+    const body = json(message)
+    return body.length <= MAX_BYTES && send(wire, EXTENSION, body)
 }

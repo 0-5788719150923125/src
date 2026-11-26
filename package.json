@@ -12,6 +12,8 @@
     "start": "node main.js",
     "build": "node main.js --build",
     "test": "node --test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "deploy": "node main.js --deploy",
     "undeploy": "node main.js --undeploy",
     "vendor": "node scripts/vendor.js",
@@ -37,6 +39,7 @@
     "peers:local": "node main.js --peers 8"
   },
   "devDependencies": {
+    "prettier": "3.10.1",
     "webtorrent": "3.0.21"
   }
 }

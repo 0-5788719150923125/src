@@ -26,9 +26,13 @@ const api = globalThis.browser ?? globalThis.chrome
 
 COMMANDS.push({ name: '/ghost', run: ghost })
 
-// Whether the extension's background (host.js) is up: in Chrome, asking
-// opens it.
-const hostIsUp = async () => Boolean(await api.runtime.sendMessage({ type: 'host' }))
+// A port of this name to the extension's background (host.js), or an
+// error when it is not up: in Chrome, asking opens it.
+async function connectHost(name) {
+    if (!(await api.runtime.sendMessage({ type: 'host' })))
+        throw new Error('no host')
+    return api.runtime.connect({ name })
+}
 
 // ------------------------------------------------------------ the model
 
@@ -46,18 +50,27 @@ function sharedWorker() {
         for (const message of queue) to.postMessage(message)
         queue = []
     }
-    proxy.postMessage = (message) => (target ? target.postMessage(message) : queue.push(message))
-    proxy.terminate = () => (target?.disconnect ? target.disconnect() : target?.terminate())
+    proxy.postMessage = (message) =>
+        target ? target.postMessage(message) : queue.push(message)
+    proxy.terminate = () =>
+        target?.disconnect ? target.disconnect() : target?.terminate()
     ;(async () => {
         try {
-            if (!(await hostIsUp())) throw new Error('no host')
-            const port = api.runtime.connect({ name: 'terminal' })
+            const port = await connectHost('terminal')
             port.onMessage.addListener((data) => proxy.onmessage?.({ data }))
-            port.onDisconnect.addListener(() => proxy.onerror?.({ message: "the extension's model went away" }))
+            port.onDisconnect.addListener(() =>
+                proxy.onerror?.({ message: "the extension's model went away" })
+            )
             use(port)
         } catch (err) {
-            console.warn('terminal: running a model of its own:', err.message || err)
-            const own = new Worker(new URL('./js/writer.worker.js', import.meta.url), { type: 'module' })
+            console.warn(
+                'terminal: running a model of its own:',
+                err.message || err
+            )
+            const own = new Worker(
+                new URL('./js/writer.worker.js', import.meta.url),
+                { type: 'module' }
+            )
             own.onmessage = (event) => proxy.onmessage?.(event)
             own.onerror = (event) => proxy.onerror?.(event)
             use(own)
@@ -79,17 +92,24 @@ function radioElsewhere() {
     let typed = 0 // /radio typed before the host answered
     async function open() {
         try {
-            if (!(await hostIsUp())) throw new Error('no host')
+            port = await connectHost('radio')
         } catch (err) {
-            console.warn('terminal: playing the radio itself:', err.message || err)
+            console.warn(
+                'terminal: playing the radio itself:',
+                err.message || err
+            )
             radio.playElsewhere(null)
             radio.restore()
             for (; typed; typed--) radio.radio()
             return
         }
-        port = api.runtime.connect({ name: 'radio' })
         port.onMessage.addListener((message) => {
-            if (message.print) print(message.print.speaker, message.print.body, message.print.options)
+            if (message.print)
+                print(
+                    message.print.speaker,
+                    message.print.body,
+                    message.print.options
+                )
             for (const [key, value] of Object.entries(message.state ?? {})) {
                 if (value) state.set(key, value)
                 else state.delete(key)
@@ -135,7 +155,10 @@ async function recall() {
 // markup, as print.js made it; parsed inert, and moved in.
 function show(kept) {
     if (!kept?.lines.length) return
-    const parsed = new DOMParser().parseFromString(`<!DOCTYPE html><body>${kept.lines.join('')}`, 'text/html')
+    const parsed = new DOMParser().parseFromString(
+        `<!DOCTYPE html><body>${kept.lines.join('')}`,
+        'text/html'
+    )
     const banner = [...output.children].find(isBanner)
     if (banner) banner.after(...parsed.body.children)
     else output.prepend(...parsed.body.children)
@@ -144,16 +167,22 @@ function show(kept) {
 
 function keep() {
     if (!store) return
-    const welcome = new Set([t('pen.info'), t('pen.info-touch'), t('ghost.info')])
-    const isOwn = (line) => isBanner(line) || welcome.has(line.querySelector(':scope > .text')?.textContent)
+    const welcome = t('ghost.info')
+    const isOwn = (line) =>
+        isBanner(line) ||
+        line.querySelector(':scope > .text')?.textContent === welcome
     let chat = state.get('chat')
     let pending = null
     const save = () => {
         clearTimeout(pending)
         pending = null
         if (!keeping) return
-        const lines = [...output.children].filter((line) => !isOwn(line)).map((line) => line.outerHTML)
-        store.set({ [SCREEN]: { lines, chat: state.get('chat') ?? null } }).catch(() => {})
+        const lines = [...output.children]
+            .filter((line) => !isOwn(line))
+            .map((line) => line.outerHTML)
+        store
+            .set({ [SCREEN]: { lines, chat: state.get('chat') ?? null } })
+            .catch(() => {})
     }
     const soon = () => (pending ??= setTimeout(save, 100))
     new MutationObserver(soon).observe(output, { childList: true })
@@ -186,7 +215,10 @@ const load = async () => {
 // may see it (activeTab), the side panel may not.
 async function here() {
     try {
-        const [tab] = await api.tabs.query({ active: true, lastFocusedWindow: true })
+        const [tab] = await api.tabs.query({
+            active: true,
+            lastFocusedWindow: true
+        })
         const url = tab?.url && new URL(tab.url)
         return url && /^https?:$/.test(url.protocol) ? url.hostname : null
     } catch {
@@ -198,14 +230,19 @@ async function here() {
 async function siteOf(word) {
     if (word.toLowerCase() === 'here') return here()
     try {
-        return new URL(word.includes('://') ? word : `https://${word}`).hostname || null
+        return (
+            new URL(word.includes('://') ? word : `https://${word}`).hostname ||
+            null
+        )
     } catch {
         return null
     }
 }
 
-const everywhere = (on) => (on ? html('ghost.on-everywhere') : html('ghost.off-everywhere'))
-const atSite = (on, site) => (on ? html('ghost.on-site', { site }) : html('ghost.off-site', { site }))
+const everywhere = (on) =>
+    on ? html('ghost.on-everywhere') : html('ghost.off-everywhere')
+const atSite = (on, site) =>
+    on ? html('ghost.on-site', { site }) : html('ghost.off-site', { site })
 
 function status({ on, sites }) {
     say(everywhere(on))
@@ -214,7 +251,12 @@ function status({ on, sites }) {
         .filter((site) => sites[site] !== on)
         .sort()
         .join(', ')
-    if (apart) say(on ? t('ghost.exceptions-off', { sites: apart }) : t('ghost.exceptions-on', { sites: apart }))
+    if (apart)
+        say(
+            on
+                ? t('ghost.exceptions-off', { sites: apart })
+                : t('ghost.exceptions-on', { sites: apart })
+        )
 }
 
 async function ghost([word, where]) {
@@ -239,19 +281,15 @@ async function ghost([word, where]) {
 
 // ------------------------------------------------------------ start
 
-// Once the model is ready, just after the terminal's own welcome line
-// (which waits on the same promise, but is asked for later): where else
-// it writes.
-writer.whenReady.then(() => setTimeout(() => say(t('ghost.info'))))
-
 // Back in the chat it was in (the site reads it from the address), then
-// the site's terminal, then the kept lines under its banner.
+// the site's terminal, with the extension's welcome line, then the kept
+// lines under its banner.
 const kept = store ? await recall() : null
 if (kept?.chat && !new URLSearchParams(location.search).has('chat')) {
     const url = new URL(location.href)
     url.searchParams.set('chat', kept.chat)
     history.replaceState(null, '', url)
 }
-await start()
+await start({ welcome: 'ghost.info' })
 show(kept)
 keep()

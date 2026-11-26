@@ -33,4 +33,7 @@ export const state = createStore()
 // The state as the ticker prints it: top-level keys in name order, so each
 // keeps its place as others come and go. What is inside each stays in the
 // order it was written (the radio's labels, the writer's numbers).
-export const sortedKeys = (data) => Object.fromEntries(Object.entries(data).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+export const sortedKeys = (data) =>
+    Object.fromEntries(
+        Object.entries(data).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    )

@@ -52,7 +52,13 @@ function ask() {
     current = { id, base, written: '', done: false }
     clearTimeout(watchdog)
     watchdog = setTimeout(() => {
-        if (current?.id !== id || current.written || current.done || retries >= RETRIES) return
+        if (
+            current?.id !== id ||
+            current.written ||
+            current.done ||
+            retries >= RETRIES
+        )
+            return
         retries++
         drop()
         ask()
@@ -72,10 +78,9 @@ function changed(again = false) {
     if (input.value !== line) retries = 0
     line = input.value
     const rest = shown()
-    if (rest === null) drop()
     // Guess anew once the typing pauses, unless the guess still has
     // something to show or is still being written.
-    if (!current || (rest === '' && current.done)) {
+    if (rest === null || (rest === '' && current.done)) {
         drop()
         timer = setTimeout(ask, PAUSE)
     }
@@ -91,19 +96,28 @@ function draw() {
     typed.textContent = input.value
     const rest = shown()
     const visible = rest && atEnd() ? rest : ''
-    const keep = press?.swiping && press.line === input.value && visible.startsWith(press.region) ? press.region : ''
+    const keep =
+        press?.swiping &&
+        press.line === input.value &&
+        visible.startsWith(press.region)
+            ? press.region
+            : ''
     taking.textContent = keep
     view.textContent = visible.slice(keep.length)
 }
 
-// Take the ghost's next word (its leading space and any punctuation stuck to
-// it) as if typed. The guess goes on writing behind it.
-function takeWord() {
-    const rest = shown()
-    if (!rest || !atEnd()) return
-    input.value += /^\s*\S+/.exec(rest)?.[0] ?? rest
+// Add `text` to the line as if typed, the cursor after it.
+function type(text) {
+    input.value += text
     input.setSelectionRange(input.value.length, input.value.length)
     changed()
+}
+
+// Take the ghost's next word (its leading space and any punctuation stuck to
+// it). The guess goes on writing behind it.
+function takeWord() {
+    const rest = shown()
+    if (rest && atEnd()) type(/^\s*\S+/.exec(rest)?.[0] ?? rest)
 }
 
 // Held, Tab takes a word every TAKE_EVERY ms once HOLD ms have passed,
@@ -131,7 +145,14 @@ function ghostBoxes() {
         for (let i = 0; i < node.length; i++) {
             range.setStart(node, i)
             range.setEnd(node, i + 1)
-            for (const r of range.getClientRects()) boxes.push({ at: text.length + i, left: r.left, right: r.right, top: r.top, bottom: r.bottom })
+            for (const r of range.getClientRects())
+                boxes.push({
+                    at: text.length + i,
+                    left: r.left,
+                    right: r.right,
+                    top: r.top,
+                    bottom: r.bottom
+                })
         }
         text += node.textContent
     }
@@ -140,19 +161,24 @@ function ghostBoxes() {
 
 // The ghost up to the end of the word at `at` (a gap counts as the word
 // after it).
-const upToWord = (text, at) => text.slice(0, at + /^\s*\S*/.exec(text.slice(at))[0].length)
+const upToWord = (text, at) =>
+    text.slice(0, at + /^\s*\S*/.exec(text.slice(at))[0].length)
+
+// How far a point is from a box, across and down.
+const across = (b, x) => Math.max(b.left - x, 0, x - b.right)
+const down = (b, y) => Math.max(b.top - y, 0, y - b.bottom)
+const nearest = (boxes, distance) =>
+    boxes.reduce((best, b) => (distance(b) < distance(best) ? b : best))
 
 // For a tap: the ghost up to the end of the word nearest the point, or null
 // when the point is not near the ghost.
 const REACH = 12 // px a finger may miss by
 function upToWordAt(x, y) {
     const { text, boxes } = ghostBoxes()
-    let best = { at: -1, distance: REACH }
-    for (const b of boxes) {
-        const distance = Math.hypot(Math.max(b.left - x, 0, x - b.right), Math.max(b.top - y, 0, y - b.bottom))
-        if (distance < best.distance) best = { at: b.at, distance }
-    }
-    return best.at < 0 ? null : upToWord(text, best.at)
+    if (!boxes.length) return null
+    const distance = (b) => Math.hypot(across(b, x), down(b, y))
+    const b = nearest(boxes, distance)
+    return distance(b) < REACH ? upToWord(text, b.at) : null
 }
 
 // For a swipe: the same, wherever the finger is, along the line of the
@@ -162,20 +188,15 @@ function upToWordAt(x, y) {
 function swipedTo(x, y) {
     const { text, boxes } = ghostBoxes()
     if (!boxes.length) return ''
-    const off = (b) => Math.max(b.top - y, 0, y - b.bottom)
-    const top = boxes.reduce((best, b) => (off(b) < off(best) ? b : best)).top
+    const { top } = nearest(boxes, (b) => down(b, y))
     const line = boxes.filter((b) => Math.abs(b.top - top) < 2)
     if (line[0].at === 0 && x < line[0].left) return ''
-    const along = (b) => Math.max(b.left - x, 0, x - b.right)
-    return upToWord(text, line.reduce((best, b) => (along(b) < along(best) ? b : best)).at)
+    return upToWord(text, nearest(line, (b) => across(b, x)).at)
 }
 
 // Keep `take`, the ghost's start, if the line is still `line`.
 function keep(take, line) {
-    if (!take || input.value !== line || !shown()?.startsWith(take)) return
-    input.value += take
-    input.setSelectionRange(input.value.length, input.value.length)
-    changed()
+    if (take && input.value === line && shown()?.startsWith(take)) type(take)
 }
 
 // A finger (or pen) down on the ghost. Where it went down is read at once,
@@ -195,11 +216,21 @@ function onPointerDown(event) {
     tap = null
     press = null
     swiped = false
-    if (event.pointerType === 'mouse' || !(view.textContent || taking.textContent)) return
+    if (
+        event.pointerType === 'mouse' ||
+        !(view.textContent || taking.textContent)
+    )
+        return
     const take = upToWordAt(event.clientX, event.clientY)
     if (!take) return
     tap = { take, line: input.value }
-    press = { id: event.pointerId, x: event.clientX, line: input.value, region: take, swiping: false }
+    press = {
+        id: event.pointerId,
+        x: event.clientX,
+        line: input.value,
+        region: take,
+        swiping: false
+    }
 }
 
 function onPointerMove(event) {
@@ -249,7 +280,12 @@ function onKey(event) {
         event.preventDefault()
         if (event.repeat || holding) return
         takeWord()
-        const hold = (holding = { delay: setTimeout(() => (hold.repeat = setInterval(takeWord, TAKE_EVERY)), HOLD) })
+        const hold = (holding = {
+            delay: setTimeout(
+                () => (hold.repeat = setInterval(takeWord, TAKE_EVERY)),
+                HOLD
+            )
+        })
     } else if (event.key === 'Escape') {
         drop()
         draw()
@@ -271,8 +307,12 @@ export function attach() {
     input.addEventListener('pointercancel', onPointerCancel)
     input.addEventListener('click', onClick)
     // Held on the ghost, a finger means to swipe: no menu, no selection.
-    input.addEventListener('contextmenu', (event) => press && event.preventDefault())
-    for (const type of ['click', 'focus', 'blur', 'select']) input.addEventListener(type, draw)
+    input.addEventListener(
+        'contextmenu',
+        (event) => press && event.preventDefault()
+    )
+    for (const type of ['click', 'focus', 'blur', 'select'])
+        input.addEventListener(type, draw)
     document.addEventListener('selectionchange', draw)
     window.addEventListener('resize', draw)
     document.fonts?.ready.then(draw)

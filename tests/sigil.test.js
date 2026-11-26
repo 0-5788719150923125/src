@@ -17,7 +17,12 @@ test('the welcome sigil is the one sigil-js drew', async () => {
 
 test('every tile draws as sigil-js drew it', async () => {
     const options = { size: 512, colors: ['black', 'white'], className: 'logo' }
-    const all = await Promise.all(Object.keys(TILES).map((syllable) => drawSigil([syllable], options)))
+    const all = await Promise.all(
+        Object.keys(TILES).map((syllable) => drawSigil([syllable], options))
+    )
     assert.equal(all.length, 512)
-    assert.equal(sha256(all.join('\n')), 'bc223bca327966f8f4c5126de50f1b421f70e62e6e90bddd51544c86f3308ce9')
+    assert.equal(
+        sha256(all.join('\n')),
+        'bc223bca327966f8f4c5126de50f1b421f70e62e6e90bddd51544c86f3308ce9'
+    )
 })

@@ -21,7 +21,8 @@ let TEXT = {}
 export function use(files) {
     TEXT = {}
     for (const [file, contents] of Object.entries(files)) {
-        for (const [name, body] of Object.entries(entries(contents))) TEXT[`${file}.${name}`] = body
+        for (const [name, body] of Object.entries(entries(contents)))
+            TEXT[`${file}.${name}`] = body
     }
 }
 
@@ -43,13 +44,18 @@ export const names = (file) =>
         .map((key) => key.slice(file.length + 1))
 
 const fill = (template, vars = {}, encode) =>
-    template.replace(/%([\w-]+)%/g, (match, name) => (Object.hasOwn(vars, name) ? encode(vars[name]) : match))
+    template.replace(/%([\w-]+)%/g, (match, name) =>
+        Object.hasOwn(vars, name) ? encode(vars[name]) : match
+    )
 
-const asHtml = (value) => (value?.html !== undefined ? value.html : escape(value))
+const asHtml = (value) =>
+    value?.html !== undefined ? value.html : escape(value)
 
 export const t = (key, vars) => fill(source(key), vars, String)
 
-export const markdown = (text, vars) => ({ html: fill(render(text, { inline: true }), vars, asHtml) })
+export const markdown = (text, vars) => ({
+    html: fill(render(text, { inline: true }), vars, asHtml)
+})
 
 export const html = (key, vars) => markdown(source(key), vars)
 

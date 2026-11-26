@@ -6,8 +6,9 @@
 // connected to every other.
 //
 // This module is shared verbatim by the browser and the stack's seeder
-// (containers/seeder), so both derive the same info hash. It imports
-// nothing.
+// (containers/node/seed.js), so both derive the same info hash.
+
+import { extension, json, readJson, send } from './wire.js'
 
 export const EXTENSION = 'src_chat'
 export const MAX_BYTES = 8192
@@ -16,46 +17,36 @@ export const MAX_LENGTH = 1024
 // What a stranger may print: these characters only, and no word longer
 // than 20. Markup, styling and foreign scripts stay out.
 export function isPlain(message) {
-    const allowed = !/[^0-9A-Za-z!@#$%&*()_\-+={[}\]\|:;"'''"",. ?\/\\~`]/.test(message)
+    const allowed = !/[^0-9A-Za-z!@#$%&*()_\-+={[}\]\|:;"'''"",. ?\/\\~`]/.test(
+        message
+    )
     const shortWords = !message.split(' ').some((word) => word.length > 20)
     return allowed && shortWords
 }
-
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
 
 // The file a room's torrent is made of. Seeding the same name and bytes
 // yields the same info hash everywhere. The bytes still say "focus", what
 // rooms were once called: changing them would move every room to a new
 // info hash.
 export const roomFile = (room) =>
-    new File([encoder.encode(`The Source / focus / ${room}`)], `src-focus-${room}`)
+    new File(
+        [new TextEncoder().encode(`The Source / focus / ${room}`)],
+        `src-focus-${room}`
+    )
 
 // A wire extension that hands every well-formed message to onMessage.
-export function chatExtension(onMessage) {
-    function Chat(wire) {
-        this.wire = wire
-    }
-    Chat.prototype.name = EXTENSION
-    Chat.prototype.onMessage = function (buf) {
-        if (buf.length > MAX_BYTES) return
-        let payload
-        try {
-            payload = JSON.parse(decoder.decode(buf))
-        } catch {
-            return
-        }
-        if (payload && typeof payload.id === 'string') onMessage(payload, this.wire)
-    }
-    return Chat
-}
+export const chatExtension = (onMessage) =>
+    extension(
+        EXTENSION,
+        (bytes) => {
+            const payload = readJson(MAX_BYTES)(bytes)
+            return typeof payload?.id === 'string' ? payload : null
+        },
+        onMessage
+    )
 
 // Send to one wire, if the peer on it speaks this extension.
-export function sendTo(wire, payload) {
-    if (wire.destroyed || !wire.peerExtendedMapping || !wire.peerExtendedMapping[EXTENSION]) return false
-    wire.extended(EXTENSION, encoder.encode(JSON.stringify(payload)))
-    return true
-}
+export const sendTo = (wire, payload) => send(wire, EXTENSION, json(payload))
 
 export const relay = (payload, from, wires) =>
     wires.filter((wire) => wire !== from).map((wire) => sendTo(wire, payload))

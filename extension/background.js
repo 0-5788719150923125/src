@@ -11,7 +11,9 @@
 const HOST = 'host.html'
 let opening = null
 
-const hostIsOpen = async () => (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })).length > 0
+const hostIsOpen = async () =>
+    (await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }))
+        .length > 0
 
 async function openHost() {
     if (await hostIsOpen()) return
@@ -19,7 +21,8 @@ async function openHost() {
         .createDocument({
             url: HOST,
             reasons: ['WORKERS', 'AUDIO_PLAYBACK', 'WEB_RTC'],
-            justification: 'Runs the small language model that writes ghost text in text fields (in a Web Worker, once for every tab), and plays the radio, whose songs come from other listeners over WebRTC, so it goes on when the popup closes.'
+            justification:
+                'Runs the small language model that writes ghost text in text fields (in a Web Worker, once for every tab), and plays the radio, whose songs come from other listeners over WebRTC, so it goes on when the popup closes.'
         })
         .catch((err) => {
             // Opened meanwhile, by another page's request.
@@ -34,7 +37,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         openHost().then(
             () => reply(true),
             (err) => {
-                console.warn('background: could not open the model:', err.message || err)
+                console.warn(
+                    'background: could not open the model:',
+                    err.message || err
+                )
                 reply(false)
             }
         )

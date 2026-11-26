@@ -52,60 +52,31 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import readline from 'node:readline/promises'
-import { fileURLToPath } from 'node:url'
+import { ROOT, filesUnder } from './build.js'
+import { cf, findZone, found } from './cloudflare.js'
 import { mirrorSettings, mirrorTeardown, syncMirror } from './mirror.js'
 import { disableTurn, ensureTurn, turnSettings, turnTeardown } from './turn.js'
 
-// wrangler runs here, so it finds functions/ (the site's Pages Functions).
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-
-const API = 'https://api.cloudflare.com/client/v4'
 export const DEFAULT_PROJECT = 'src-eco'
 
 const MARK = 'The Source'
 const log = (message) => console.log(`[deploy] ${message}`)
-const sleep = (seconds) => new Promise((resolve) => setTimeout(resolve, seconds * 1000))
-
-// Call the Cloudflare REST API; throws with the API's own error text.
-async function cf(method, route, token, body) {
-    const response = await fetch(API + route, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(30000)
-    })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) {
-        const errors = (payload.errors || []).map((e) => e.message).join('; ')
-        throw new Error(`${method} ${route} -> HTTP ${response.status}: ${errors || '?'}`)
-    }
-    return payload
-}
+const sleep = (seconds) =>
+    new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+const branch = () =>
+    (process.env.CLOUDFLARE_PAGES_PRODUCTION_BRANCH || 'main').trim()
+const domainOf = (domain) =>
+    (domain || process.env.CLOUDFLARE_PAGES_DOMAIN || '').trim()
 
 // The project, or null if there is none.
-async function getProject(account, project, token) {
-    try {
-        return (await cf('GET', `/accounts/${account}/pages/projects/${project}`, token)).result || null
-    } catch (err) {
-        if (/HTTP 404/.test(err.message)) return null
-        throw err
-    }
-}
+const getProject = (account, project, token) =>
+    found(`/accounts/${account}/pages/projects/${project}`, token)
 
-async function ensureProject(account, project, branch, token) {
-    const existing = await getProject(account, project, token)
-    if (existing) return existing
-    await cf('POST', `/accounts/${account}/pages/projects`, token, { name: project, production_branch: branch })
-    log(`created Pages project '${project}'`)
-    return getProject(account, project, token)
-}
-
-// Custom domains a project serves besides the given one.
-const otherDomains = (info, domain) =>
-    (info.domains || []).filter((name) => name !== domain && name !== info.subdomain)
-
+// Refuse a project that serves custom domains besides the given one.
 function refuseShared(info, domain, action) {
-    const others = otherDomains(info, domain)
+    const others = (info.domains || []).filter(
+        (name) => name !== domain && name !== info.subdomain
+    )
     if (!others.length) return
     throw new Error(
         `project '${info.name}' also serves ${others.join(', ')}; ${action} would take that site with it. ` +
@@ -113,44 +84,55 @@ function refuseShared(info, domain, action) {
     )
 }
 
-// The zone whose name is the longest suffix of the domain.
-async function findZone(domain, token) {
-    const zones = (await cf('GET', '/zones?per_page=50', token)).result || []
-    return zones
-        .filter((z) => domain === z.name || domain.endsWith(`.${z.name}`))
-        .sort((a, b) => b.name.length - a.name.length)[0]
-}
-
 const dnsRecords = async (zone, domain, token) =>
-    (await cf('GET', `/zones/${zone.id}/dns_records?name=${domain}`, token)).result || []
-
-// What a CNAME pointed at before a deploy took it over, from its comment.
+    (await cf('GET', `/zones/${zone.id}/dns_records?name=${domain}`, token))
+        .result || []
 
 async function ensureCname(domain, subdomain, token) {
     const zone = await findZone(domain, token)
     if (!zone) {
-        log(`no Cloudflare zone owns ${domain}; add a proxied CNAME -> ${subdomain} manually`)
+        log(
+            `no Cloudflare zone owns ${domain}; add a proxied CNAME -> ${subdomain} manually`
+        )
         return false
     }
     const records = await dnsRecords(zone, domain, token)
     const blocking = records.find((r) => r.type === 'A' || r.type === 'AAAA')
-    if (blocking) throw new Error(`${domain} has an ${blocking.type} record (${blocking.content}); remove it or pick another domain`)
-    const record = { type: 'CNAME', name: domain, content: subdomain, proxied: true }
+    if (blocking)
+        throw new Error(
+            `${domain} has an ${blocking.type} record (${blocking.content}); remove it or pick another domain`
+        )
+    const record = {
+        type: 'CNAME',
+        name: domain,
+        content: subdomain,
+        proxied: true,
+        comment: MARK
+    }
     const cname = records.find((r) => r.type === 'CNAME')
     if (cname) {
         if (cname.content === subdomain && cname.proxied) return true
-        await cf('PATCH', `/zones/${zone.id}/dns_records/${cname.id}`, token, { ...record, comment: MARK })
-        log(`pointed CNAME ${domain} at ${subdomain} (was ${cname.content}; undeploy deletes it)`)
+        await cf(
+            'PATCH',
+            `/zones/${zone.id}/dns_records/${cname.id}`,
+            token,
+            record
+        )
+        log(
+            `pointed CNAME ${domain} at ${subdomain} (was ${cname.content}; undeploy deletes it)`
+        )
         return true
     }
-    await cf('POST', `/zones/${zone.id}/dns_records`, token, { ...record, comment: MARK })
+    await cf('POST', `/zones/${zone.id}/dns_records`, token, record)
     log(`created CNAME ${domain} -> ${subdomain} (proxied)`)
     return true
 }
 
 async function ensureDomainAttached(account, project, domain, token) {
     const route = `/accounts/${account}/pages/projects/${project}/domains`
-    const names = ((await cf('GET', route, token)).result || []).map((d) => d.name)
+    const names = ((await cf('GET', route, token)).result || []).map(
+        (d) => d.name
+    )
     if (!names.includes(domain)) {
         await cf('POST', route, token, { name: domain })
         log(`attached custom domain ${domain} to '${project}'`)
@@ -159,17 +141,12 @@ async function ensureDomainAttached(account, project, domain, token) {
 
 // The zone's cache rules (one ruleset per zone and phase), or null.
 const CACHE_PHASE = 'http_request_cache_settings'
-async function cacheRules(zone, token) {
-    try {
-        return (await cf('GET', `/zones/${zone.id}/rulesets/phases/${CACHE_PHASE}/entrypoint`, token)).result
-    } catch (err) {
-        if (/HTTP 404/.test(err.message)) return null
-        throw err
-    }
-}
+const cacheRules = (zone, token) =>
+    found(`/zones/${zone.id}/rulesets/phases/${CACHE_PHASE}/entrypoint`, token)
 
 const cacheRuleName = (domain) => `${MARK}: ${domain}`
-const findCacheRule = (rules, domain) => (rules?.rules || []).find((r) => r.description === cacheRuleName(domain))
+const findCacheRule = (rules, domain) =>
+    (rules?.rules || []).find((r) => r.description === cacheRuleName(domain))
 
 // Browsers keep the domain's files only as long as Pages says (max-age=0).
 // A failure never fails the deploy, but is loud: visitors would get it late.
@@ -187,23 +164,43 @@ async function ensureCacheRule(domain, token) {
         const rules = await cacheRules(zone, token)
         const existing = findCacheRule(rules, domain)
         if (!rules) {
-            await cf('PUT', `/zones/${zone.id}/rulesets/phases/${CACHE_PHASE}/entrypoint`, token, { rules: [rule] })
+            await cf(
+                'PUT',
+                `/zones/${zone.id}/rulesets/phases/${CACHE_PHASE}/entrypoint`,
+                token,
+                { rules: [rule] }
+            )
         } else if (!existing) {
-            await cf('POST', `/zones/${zone.id}/rulesets/${rules.id}/rules`, token, rule)
+            await cf(
+                'POST',
+                `/zones/${zone.id}/rulesets/${rules.id}/rules`,
+                token,
+                rule
+            )
         } else if (
             existing.expression !== rule.expression ||
-            existing.action_parameters?.browser_ttl?.mode !== 'respect_origin' ||
+            existing.action_parameters?.browser_ttl?.mode !==
+                'respect_origin' ||
             existing.enabled === false
         ) {
-            await cf('PATCH', `/zones/${zone.id}/rulesets/${rules.id}/rules/${existing.id}`, token, rule)
+            await cf(
+                'PATCH',
+                `/zones/${zone.id}/rulesets/${rules.id}/rules/${existing.id}`,
+                token,
+                rule
+            )
         } else {
             return true
         }
-        log(`cache rule for ${domain}: browsers keep files as long as Pages says (revalidate each load)`)
+        log(
+            `cache rule for ${domain}: browsers keep files as long as Pages says (revalidate each load)`
+        )
         return true
     } catch (err) {
         log(`WARNING: could not set the cache rule (${err.message})`)
-        log(`hint: the API token needs "Zone > Cache Rules > Edit"; until then, browsers keep ${domain}'s files for the zone's Browser Cache TTL`)
+        log(
+            `hint: the API token needs "Zone > Cache Rules > Edit"; until then, browsers keep ${domain}'s files for the zone's Browser Cache TTL`
+        )
         return false
     }
 }
@@ -211,7 +208,10 @@ async function ensureCacheRule(domain, token) {
 function credentials(action) {
     const token = process.env.CLOUDFLARE_API_TOKEN
     const account = process.env.CLOUDFLARE_ACCOUNT_ID
-    if (!token || !account) log(`CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set; cannot ${action}`)
+    if (!token || !account)
+        log(
+            `CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set; cannot ${action}`
+        )
     return token && account ? { token, account } : null
 }
 
@@ -221,32 +221,40 @@ export async function ensureInfrastructure(project, domain) {
     const creds = credentials('deploy')
     if (!creds) return null
     const { token, account } = creds
-    const branch = (process.env.CLOUDFLARE_PAGES_PRODUCTION_BRANCH || 'main').trim()
     try {
-        const existing = await getProject(account, project, token)
-        if (existing) refuseShared(existing, domain, 'a deploy')
-        const { subdomain } = existing || (await ensureProject(account, project, branch, token))
+        let info = await getProject(account, project, token)
+        if (info) {
+            refuseShared(info, domain, 'a deploy')
+        } else {
+            await cf('POST', `/accounts/${account}/pages/projects`, token, {
+                name: project,
+                production_branch: branch()
+            })
+            log(`created Pages project '${project}'`)
+            info = await getProject(account, project, token)
+        }
+        const { subdomain } = info
         if (domain && subdomain) {
             // The record first: Pages validates the domain as it is attached.
             await ensureCname(domain, subdomain, token)
             await ensureDomainAttached(account, project, domain, token)
             // Nudge Cloudflare to re-check the domain; harmless once active.
-            await cf('PATCH', `/accounts/${account}/pages/projects/${project}/domains/${domain}`, token).catch(() => {})
+            await cf(
+                'PATCH',
+                `/accounts/${account}/pages/projects/${project}/domains/${domain}`,
+                token
+            ).catch(() => {})
             await ensureCacheRule(domain, token)
         }
-        log(`infrastructure ready: https://${domain || subdomain} (project '${project}' -> ${subdomain})`)
+        log(
+            `infrastructure ready: https://${domain || subdomain} (project '${project}' -> ${subdomain})`
+        )
         return subdomain
     } catch (err) {
         log(`ERROR: Cloudflare bootstrap failed - ${err.message}`)
         return null
     }
 }
-
-const files = (dir) =>
-    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-        const full = path.join(dir, entry.name)
-        return entry.isDirectory() ? files(full) : [full]
-    })
 
 // Evict this site's exact URLs from the edge cache (hostname purges are
 // Enterprise-only). Needs the "Zone > Cache Purge" token permission.
@@ -258,16 +266,20 @@ async function purgeCache(domain, out, token) {
     }
     const urls = [
         `https://${domain}/`,
-        ...files(out).map((f) => `https://${domain}/${path.relative(out, f).split(path.sep).join('/')}`)
+        ...filesUnder(out).map((name) => `https://${domain}/${name}`)
     ]
     try {
         // The purge endpoint takes at most 30 URLs per request.
         for (let i = 0; i < urls.length; i += 30) {
-            await cf('POST', `/zones/${zone.id}/purge_cache`, token, { files: urls.slice(i, i + 30) })
+            await cf('POST', `/zones/${zone.id}/purge_cache`, token, {
+                files: urls.slice(i, i + 30)
+            })
         }
     } catch (err) {
         log(`cache purge failed (${err.message})`)
-        log('hint: the API token needs the "Zone > Cache Purge > Purge" permission')
+        log(
+            'hint: the API token needs the "Zone > Cache Purge > Purge" permission'
+        )
         return false
     }
     log(`purged ${urls.length} URLs from the edge cache`)
@@ -275,16 +287,24 @@ async function purgeCache(domain, out, token) {
 }
 
 const buildId = (out) =>
-    /name="src-build" content="([0-9a-f]+)"/.exec(fs.readFileSync(path.join(out, 'index.html'), 'utf8'))?.[1]
+    /name="src-build" content="([0-9a-f]+)"/.exec(
+        fs.readFileSync(path.join(out, 'index.html'), 'utf8')
+    )?.[1]
 
 // Does the URL serve this build? `bust` adds a unique query string, which
 // Cloudflare will not cache, so it reads the deployment itself. Returns
 // null when the fetch fails, so "stale" and "unreachable" differ.
 async function servesBuild(url, id, bust = false) {
     const target = bust ? `${url}?src-check=${crypto.randomUUID()}` : url
-    const headers = { 'User-Agent': `src-deploy/1.0 (+${url})`, ...(bust ? { 'Cache-Control': 'no-store' } : {}) }
+    const headers = {
+        'User-Agent': `src-deploy/1.0 (+${url})`,
+        ...(bust ? { 'Cache-Control': 'no-store' } : {})
+    }
     try {
-        const response = await fetch(target, { headers, signal: AbortSignal.timeout(30000) })
+        const response = await fetch(target, {
+            headers,
+            signal: AbortSignal.timeout(30000)
+        })
         return (await response.text()).includes(id)
     } catch {
         return null
@@ -308,10 +328,14 @@ async function settleCache(domain, out, token) {
     let live = false
     for (let attempt = 0; attempt < 20 && !live; attempt++) {
         live = await servesBuild(url, id, true)
-        if (!live && attempt === 0) log('waiting for the deployment to go live at the edge...')
+        if (!live && attempt === 0)
+            log('waiting for the deployment to go live at the edge...')
         if (!live) await sleep(3)
     }
-    if (!live) log('WARNING: the new deployment is not being served yet; purging anyway')
+    if (!live)
+        log(
+            'WARNING: the new deployment is not being served yet; purging anyway'
+        )
     for (const wait of [12, 20, 30, 45]) {
         if (!(await purgeCache(domain, out, token))) return false
         log(`waiting ${wait}s for the purge to propagate...`)
@@ -329,18 +353,24 @@ async function settleCache(domain, out, token) {
     }
     await purgeCache(domain, out, token)
     log(`WARNING: ${url} did not settle on build ${id}`)
-    log(`the content IS deployed - ${url}?x=1 (uncacheable) proves it; the edge cache is lagging`)
+    log(
+        `the content IS deployed - ${url}?x=1 (uncacheable) proves it; the edge cache is lagging`
+    )
     return false
 }
 
-const hasCommand = (name) => spawnSync('sh', ['-c', `command -v ${name}`]).status === 0
+const hasCommand = (name) =>
+    spawnSync('sh', ['-c', `command -v ${name}`]).status === 0
 
 export async function deploy(out, { project = DEFAULT_PROJECT, domain } = {}) {
-    domain = (domain || process.env.CLOUDFLARE_PAGES_DOMAIN || '').trim()
+    domain = domainOf(domain)
     const subdomain = await ensureInfrastructure(project, domain)
     if (!subdomain) return false
-    const wrangler = hasCommand('wrangler') ? ['wrangler'] : ['npx', '--yes', 'wrangler']
-    const branch = (process.env.CLOUDFLARE_PAGES_PRODUCTION_BRANCH || 'main').trim()
+    const { CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account } =
+        process.env
+    const wrangler = hasCommand('wrangler')
+        ? ['wrangler']
+        : ['npx', '--yes', 'wrangler']
     const target = `https://${domain || subdomain}`
     // The mirror first, so the site never names files it does not hold yet.
     // Its trouble never fails a deploy: peers still carry the radio.
@@ -351,35 +381,58 @@ export async function deploy(out, { project = DEFAULT_PROJECT, domain } = {}) {
     // chat still connects directly.
     try {
         const relay = turnSettings()
-        const { token, account } = credentials('deploy')
         if (relay) await ensureTurn(account, project, token, relay)
         else await disableTurn(account, project, token)
     } catch (err) {
-        log(`WARNING: the chat relay is not set up (${err.message}); chat connects directly only`)
+        log(
+            `WARNING: the chat relay is not set up (${err.message}); chat connects directly only`
+        )
     }
-    log(`uploading ${out} to '${project}' (branch '${branch}' -> ${target})...`)
+    log(
+        `uploading ${out} to '${project}' (branch '${branch()}' -> ${target})...`
+    )
+    // wrangler runs from the repository, so it finds functions/ (the site's
+    // Pages Functions).
     const result = spawnSync(
         wrangler[0],
-        [...wrangler.slice(1), 'pages', 'deploy', out, '--project-name', project, '--branch', branch, '--commit-dirty=true'],
+        [
+            ...wrangler.slice(1),
+            'pages',
+            'deploy',
+            out,
+            '--project-name',
+            project,
+            '--branch',
+            branch(),
+            '--commit-dirty=true'
+        ],
         { cwd: ROOT, env: process.env, encoding: 'utf8', timeout: 600000 }
     )
     if (result.status !== 0) {
-        log(`upload failed (exit ${result.status}): ${(result.stderr || '').trim().slice(0, 500)}`)
+        log(
+            `upload failed (exit ${result.status}): ${(result.stderr || '').trim().slice(0, 500)}`
+        )
         return false
     }
     const tail = (result.stdout || '').split('\n').filter((line) => line.trim())
     log(`upload succeeded. ${tail.at(-1) || ''}`)
     // Cache trouble never fails a deploy: the content is up either way.
-    if (domain) await settleCache(domain, out, process.env.CLOUDFLARE_API_TOKEN)
+    if (domain) await settleCache(domain, out, token)
     log(`live at ${target}`)
     return true
 }
 
-async function confirm(question) {
+// Asks on the terminal; anything but yes (or no terminal) is no.
+export async function confirm(question) {
     if (!process.stdin.isTTY) return false
-    const prompt = readline.createInterface({ input: process.stdin, output: process.stdout })
+    const prompt = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    })
     try {
-        return /^y(es)?$/i.test((await prompt.question(`${question} [y/N] `)).trim())
+        return /^y(es)?$/i.test(
+            (await prompt.question(`${question} [y/N] `)).trim()
+        )
     } finally {
         prompt.close()
     }
@@ -391,14 +444,17 @@ async function deleteDeployments(account, project, token) {
     const route = `/accounts/${account}/pages/projects/${project}/deployments`
     let deleted = 0
     for (;;) {
-        const page = (await cf('GET', `${route}?per_page=25`, token)).result || []
+        const page =
+            (await cf('GET', `${route}?per_page=25`, token)).result || []
         let progress = false
         for (const { id } of page) {
             try {
                 await cf('DELETE', `${route}/${id}?force=true`, token)
                 deleted++
                 progress = true
-            } catch {}
+            } catch (err) {
+                log(`could not delete deployment ${id}: ${err.message}`)
+            }
         }
         if (!progress) break
     }
@@ -410,7 +466,9 @@ async function deleteProject(account, project, token) {
     try {
         await cf('DELETE', route, token)
     } catch (err) {
-        log(`could not delete the project at once (${err.message}); deleting its deployments first`)
+        log(
+            `could not delete the project at once (${err.message}); deleting its deployments first`
+        )
         await deleteDeployments(account, project, token)
         await cf('DELETE', route, token)
     }
@@ -418,10 +476,14 @@ async function deleteProject(account, project, token) {
 }
 
 // Take down what deploy() set up: the custom domain, its CNAME, its cache
-// rule, the
-// project with every deployment, the radio's mirror, and the chat's relay. Shows the plan and asks first, unless `yes`.
-export async function undeploy({ project = DEFAULT_PROJECT, domain, yes = false } = {}) {
-    domain = (domain || process.env.CLOUDFLARE_PAGES_DOMAIN || '').trim()
+// rule, the project with every deployment, the radio's mirror, and the
+// chat's relay. Shows the plan and asks first, unless `yes`.
+export async function undeploy({
+    project = DEFAULT_PROJECT,
+    domain,
+    yes = false
+} = {}) {
+    domain = domainOf(domain)
     const creds = credentials('undeploy')
     if (!creds) return false
     const { token, account } = creds
@@ -429,60 +491,102 @@ export async function undeploy({ project = DEFAULT_PROJECT, domain, yes = false 
         const info = await getProject(account, project, token)
         if (info) refuseShared(info, domain, 'undeploying it')
         const zone = domain ? await findZone(domain, token) : null
-        const cname = zone ? (await dnsRecords(zone, domain, token)).find((r) => r.type === 'CNAME') : null
+        const cname = zone
+            ? (await dnsRecords(zone, domain, token)).find(
+                  (r) => r.type === 'CNAME'
+              )
+            : null
         // The project's CNAME; with the project gone, one the deploy made
         // (its comment) that still points at Pages.
         const ours = Boolean(
             cname &&
-                (info ? cname.content === info.subdomain : cname.comment?.startsWith(MARK) && cname.content.endsWith('.pages.dev'))
+            (info
+                ? cname.content === info.subdomain
+                : cname.comment?.startsWith(MARK) &&
+                  cname.content.endsWith('.pages.dev'))
         )
-        const attached = Boolean(info && domain && info.domains?.includes(domain))
-        let rules = null
-        if (zone) {
-            try {
-                rules = await cacheRules(zone, token)
-            } catch (err) {
-                log(`could not read the cache rules (${err.message}); leaving them as they are`)
-            }
-        }
-        const cacheRule = findCacheRule(rules, domain)
-        const mirror = mirrorSettings()
-        const teardown = mirror ? await mirrorTeardown(mirror) : { plan: [], run: async () => {} }
-        const relay = await turnTeardown(account, project, token)
-
-        const plan = []
-        if (attached) plan.push(`detach ${domain} from '${project}'`)
         // Only the one record, by its id; never the zone or its other
         // records. A zone's root (src.eco itself) keeps even that: without
         // it the bare domain stops resolving, so it is left to change by hand.
         const apex = Boolean(zone && domain === zone.name)
-        if (ours && !apex) plan.push(`delete the CNAME ${domain} -> ${cname.content} (that record only)`)
-        if (ours && apex) log(`leaving the CNAME ${domain} -> ${cname.content} alone: it is the root of the zone`)
+        const deleteCname = ours && !apex
+        const attached = Boolean(
+            info && domain && info.domains?.includes(domain)
+        )
+        const rules = zone
+            ? await cacheRules(zone, token).catch((err) => {
+                  log(
+                      `could not read the cache rules (${err.message}); leaving them as they are`
+                  )
+                  return null
+              })
+            : null
+        const cacheRule = findCacheRule(rules, domain)
+        const mirror = mirrorSettings()
+        const teardown = mirror
+            ? await mirrorTeardown(mirror)
+            : { plan: [], run: async () => {} }
+        const relay = await turnTeardown(account, project, token)
+
+        const plan = []
+        if (attached) plan.push(`detach ${domain} from '${project}'`)
+        if (deleteCname)
+            plan.push(
+                `delete the CNAME ${domain} -> ${cname.content} (that record only)`
+            )
+        if (ours && apex)
+            log(
+                `leaving the CNAME ${domain} -> ${cname.content} alone: it is the root of the zone`
+            )
         if (cacheRule) plan.push(`delete the cache rule for ${domain}`)
-        if (info) plan.push(`delete the Pages project '${project}' (${info.subdomain}) and all its deployments`)
+        if (info)
+            plan.push(
+                `delete the Pages project '${project}' (${info.subdomain}) and all its deployments`
+            )
         plan.push(...teardown.plan, ...relay.plan)
-        if (cname && !ours) log(`leaving the CNAME ${domain} -> ${cname.content} alone: it is not this project's`)
+        if (cname && !ours)
+            log(
+                `leaving the CNAME ${domain} -> ${cname.content} alone: it is not this project's`
+            )
         if (!plan.length) {
-            log(`nothing to undeploy: no project '${project}'${domain ? ` and no CNAME of its own at ${domain}` : ''}`)
+            log(
+                `nothing to undeploy: no project '${project}'${domain ? ` and no CNAME of its own at ${domain}` : ''}`
+            )
             return true
         }
         log('this will:')
         for (const step of plan) log(`  - ${step}`)
         if (!yes && !(await confirm('[deploy] go ahead?'))) {
-            log(process.stdin.isTTY ? 'cancelled' : 'not a terminal; pass --yes to undeploy without asking')
+            log(
+                process.stdin.isTTY
+                    ? 'cancelled'
+                    : 'not a terminal; pass --yes to undeploy without asking'
+            )
             return false
         }
 
         if (attached) {
-            await cf('DELETE', `/accounts/${account}/pages/projects/${project}/domains/${domain}`, token)
+            await cf(
+                'DELETE',
+                `/accounts/${account}/pages/projects/${project}/domains/${domain}`,
+                token
+            )
             log(`detached ${domain}`)
         }
-        if (ours && !apex) {
-            await cf('DELETE', `/zones/${zone.id}/dns_records/${cname.id}`, token)
+        if (deleteCname) {
+            await cf(
+                'DELETE',
+                `/zones/${zone.id}/dns_records/${cname.id}`,
+                token
+            )
             log(`deleted the CNAME ${domain}`)
         }
         if (cacheRule) {
-            await cf('DELETE', `/zones/${zone.id}/rulesets/${rules.id}/rules/${cacheRule.id}`, token)
+            await cf(
+                'DELETE',
+                `/zones/${zone.id}/rulesets/${rules.id}/rules/${cacheRule.id}`,
+                token
+            )
             log(`deleted the cache rule for ${domain}`)
         }
         if (info) await deleteProject(account, project, token)

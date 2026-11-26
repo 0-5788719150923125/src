@@ -10,6 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
+import { filesUnder } from './build.js'
 
 // 1980-01-01 00:00, the earliest time a zip can say.
 const DOS_TIME = 0
@@ -42,15 +43,9 @@ export function zip(files) {
         const central = Buffer.alloc(46)
         central.writeUInt32LE(0x02014b50, 0)
         central.writeUInt16LE((3 << 8) | 20, 4) // made by: Unix, 2.0
-        central.writeUInt16LE(20, 6)
-        central.writeUInt16LE(0x0800, 8)
-        central.writeUInt16LE(stored ? 0 : 8, 10)
-        central.writeUInt16LE(DOS_TIME, 12)
-        central.writeUInt16LE(DOS_DATE, 14)
-        central.writeUInt32LE(crc, 16)
-        central.writeUInt32LE(body.length, 20)
-        central.writeUInt32LE(data.length, 24)
-        central.writeUInt16LE(nameBuf.length, 28)
+        // From "version needed" to the extra field's length, the central
+        // header says what the local one does.
+        local.copy(central, 6, 4, 30)
         central.writeUInt32LE((0o100644 << 16) >>> 0, 38) // a plain file, rw-r--r--
         central.writeUInt32LE(offset, 42)
         locals.push(local, nameBuf, body)
@@ -68,18 +63,8 @@ export function zip(files) {
 }
 
 // Every file under `dir`, as [relative name, Buffer], in name order.
-export function filesIn(dir) {
-    const out = []
-    const walk = (sub) => {
-        for (const entry of fs.readdirSync(path.join(dir, sub), { withFileTypes: true })) {
-            const rel = sub ? `${sub}/${entry.name}` : entry.name
-            if (entry.isDirectory()) walk(rel)
-            else if (entry.isFile()) out.push(rel)
-        }
-    }
-    walk('')
-    return out.sort().map((name) => [name, fs.readFileSync(path.join(dir, name))])
-}
+export const filesIn = (dir) =>
+    filesUnder(dir).map((name) => [name, fs.readFileSync(path.join(dir, name))])
 
 // The entries of an archive this module wrote (or any zip without zip64
 // or data descriptors): [name, Buffer] pairs. For the tests.
@@ -96,9 +81,16 @@ export function unzip(buf) {
         const comment = buf.readUInt16LE(at + 32)
         const local = buf.readUInt32LE(at + 42)
         const name = buf.toString('utf8', at + 46, at + 46 + nameLength)
-        const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28)
+        const start =
+            local +
+            30 +
+            buf.readUInt16LE(local + 26) +
+            buf.readUInt16LE(local + 28)
         const body = buf.subarray(start, start + size)
-        out.push([name, method === 8 ? zlib.inflateRawSync(body) : Buffer.from(body)])
+        out.push([
+            name,
+            method === 8 ? zlib.inflateRawSync(body) : Buffer.from(body)
+        ])
         at += 46 + nameLength + extra + comment
     }
     return out

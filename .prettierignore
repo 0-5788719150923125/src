@@ -1,0 +1,14 @@
+# Built, downloaded or vendored: not ours to format.
+build/
+data/
+state/
+node_modules/
+src/vendor/
+package-lock.json
+containers/node/package-lock.json
+# The site's text is a Markdown dialect in which line breaks and leading
+# spaces print (src/js/markdown.js): formatting would change what visitors
+# read. The rest of the Markdown is left as written, too.
+*.md
+# Pages the extension's build edits by exact match (scripts/extension.js).
+*.html

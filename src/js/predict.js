@@ -24,16 +24,20 @@ export function common(a, b) {
 // line has not reached, or null once the line has gone its own way.
 export function ahead({ base, written }, line) {
     const whole = base + written
-    return line.length >= base.length && whole.startsWith(line) ? whole.slice(line.length) : null
+    return line.length >= base.length && whole.startsWith(line)
+        ? whole.slice(line.length)
+        : null
 }
 
 // Whether a token agrees with the unfinished text it must begin with.
-const agrees = (pending, piece) => piece !== '' && (piece.startsWith(pending) || pending.startsWith(piece))
+const agrees = (pending, piece) =>
+    piece !== '' && (piece.startsWith(pending) || pending.startsWith(piece))
 
 // What a token adds to the ghost, and what of the unfinished text is left
 // for the next token to agree with.
 export function consume(pending, piece) {
-    if (piece.startsWith(pending)) return { pending: '', shown: piece.slice(pending.length) }
+    if (piece.startsWith(pending))
+        return { pending: '', shown: piece.slice(pending.length) }
     return { pending: pending.slice(piece.length), shown: '' }
 }
 
@@ -49,17 +53,37 @@ export function consume(pending, piece) {
 // likeliest tokens that together hold `topP` of the probability (nucleus
 // sampling), so it varies without wandering into the unlikely tail.
 // `random` returns [0, 1). -1 when nothing fits.
-export function pick(logits, { vocab, allowed, stops, pending = '', recent = new Set(), penalty = 1, boost = null, lambda = 0, temperature = 0, topP = 1, random = Math.random }) {
+export function pick(
+    logits,
+    {
+        vocab,
+        allowed,
+        stops,
+        pending = '',
+        recent = new Set(),
+        penalty = 1,
+        boost = null,
+        lambda = 0,
+        temperature = 0,
+        topP = 1,
+        random = Math.random
+    }
+) {
     const scores = new Float32Array(logits.length)
     let best = -1
     let top = -Infinity
     for (let id = 0; id < logits.length; id++) {
-        if (pending ? !allowed[id] || !agrees(pending, vocab[id]) : !allowed[id] && !stops[id]) {
+        if (
+            pending
+                ? !allowed[id] || !agrees(pending, vocab[id])
+                : !allowed[id] && !stops[id]
+        ) {
             scores[id] = -Infinity
             continue
         }
         let score = logits[id]
-        if (recent.has(id)) score = score > 0 ? score / penalty : score * penalty
+        if (recent.has(id))
+            score = score > 0 ? score / penalty : score * penalty
         scores[id] = score
         if (score > top) {
             top = score
@@ -70,19 +94,23 @@ export function pick(logits, { vocab, allowed, stops, pending = '', recent = new
     if (best < 0 || (!blend && !(temperature > 0))) return best
     const t = temperature > 0 ? temperature : 1
     let sum = 0
-    for (let id = 0; id < scores.length; id++) if (scores[id] > -Infinity) sum += Math.exp((scores[id] - top) / t)
+    for (let id = 0; id < scores.length; id++)
+        if (scores[id] > -Infinity) sum += Math.exp((scores[id] - top) / t)
     // Each candidate's probability: the model's share, blended with the
     // memory's. Tokens below e^-20 of the likeliest cannot matter and are
     // skipped, unless the memory lends them a share.
     const floor = top - 20 * t
+    const own = blend ? 1 - lambda : 1
     const candidates = []
     for (let id = 0; id < scores.length; id++) {
         const score = scores[id]
         if (score === -Infinity) continue
-        const lent = blend ? boost.get(id) || 0 : 0
+        const lent = (blend && boost.get(id)) || 0
         if (score < floor && !lent) continue
-        const p = ((blend ? 1 - lambda : 1) * Math.exp((score - top) / t)) / sum + (blend ? lambda * lent : 0)
-        candidates.push([id, p])
+        candidates.push([
+            id,
+            (own * Math.exp((score - top) / t)) / sum + lambda * lent
+        ])
     }
     candidates.sort((a, b) => b[1] - a[1])
     if (!(temperature > 0)) return candidates[0][0]
@@ -91,7 +119,8 @@ export function pick(logits, { vocab, allowed, stops, pending = '', recent = new
     for (const [, p] of candidates) total += p
     let kept = 0
     let held = 0
-    while (kept < candidates.length && (kept === 0 || held < topP * total)) held += candidates[kept++][1]
+    while (kept < candidates.length && (kept === 0 || held < topP * total))
+        held += candidates[kept++][1]
     let at = random() * held
     for (let i = 0; i < kept; i++) {
         at -= candidates[i][1]
@@ -113,13 +142,15 @@ export function pick(logits, { vocab, allowed, stops, pending = '', recent = new
 // wit"), and more steps before each word showed (2026-11-25).
 export function boostFrom(spans, written, first) {
     const boost = new Map()
-    let total = 0
-    for (const [text, share] of spans) if (text.startsWith(written) && text.length > written.length) total += share
+    const agreeing = spans.filter(
+        ([text]) => text.length > written.length && text.startsWith(written)
+    )
+    const total = agreeing.reduce((sum, [, share]) => sum + share, 0)
     if (!total) return boost
-    for (const [text, share] of spans) {
-        if (!text.startsWith(written) || text.length === written.length) continue
+    for (const [text, share] of agreeing) {
         const id = first(text.slice(written.length))
-        if (id !== undefined) boost.set(id, (boost.get(id) || 0) + share / total)
+        if (id !== undefined)
+            boost.set(id, (boost.get(id) || 0) + share / total)
     }
     return boost
 }

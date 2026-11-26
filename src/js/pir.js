@@ -53,24 +53,28 @@ const bits = (p) => 31 - Math.clz32(p)
 
 function check(shape) {
     const { cols, n, p, record } = shape
-    if (!(p > 1 && (p & (p - 1)) === 0 && p <= 1 << 16)) throw new Error('pir: p must be a power of two, at most 2^16')
+    if (!(p > 1 && (p & (p - 1)) === 0 && p <= 1 << 16))
+        throw new Error('pir: p must be a power of two, at most 2^16')
     if (!(cols > 0 && n > 0 && record > 0)) throw new Error('pir: bad shape')
     return shape
 }
 
 // Elements a record takes: its bits, at log2(p) a element.
-export const elements = (shape = SHAPE) => Math.ceil((check(shape).record * 8) / bits(shape.p))
+export const elements = (shape = SHAPE) =>
+    Math.ceil((check(shape).record * 8) / bits(shape.p))
 
 // The scale that lifts a plaintext element into the top bits: 2^32 / p.
 const delta = (shape) => 2 ** (32 - bits(shape.p))
 
 // Where record `index` sits.
-export const locate = (index, shape = SHAPE) => ({ column: index % shape.cols, group: Math.floor(index / shape.cols) })
+export const locate = (index, shape = SHAPE) => ({
+    column: index % shape.cols,
+    group: Math.floor(index / shape.cols)
+})
 
 // ------------------------------------------------------------ the matrix A
 
 const keys = new Map() // seed -> AES key
-const LITTLE = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1
 
 function aesKey(seed) {
     if (!keys.has(seed)) {
@@ -78,7 +82,15 @@ function aesKey(seed) {
             seed,
             crypto.subtle
                 .digest('SHA-256', new TextEncoder().encode(seed))
-                .then((digest) => crypto.subtle.importKey('raw', digest.slice(0, 16), 'AES-CTR', false, ['encrypt']))
+                .then((digest) =>
+                    crypto.subtle.importKey(
+                        'raw',
+                        digest.slice(0, 16),
+                        'AES-CTR',
+                        false,
+                        ['encrypt']
+                    )
+                )
         )
     }
     return keys.get(seed)
@@ -96,18 +108,52 @@ export async function matrixRows(shape, from, count) {
     const view = new DataView(counter.buffer)
     view.setUint32(8, Math.floor(block / 2 ** 32))
     view.setUint32(12, block >>> 0)
-    const stream = await crypto.subtle.encrypt({ name: 'AES-CTR', counter, length: 64 }, await aesKey(shape.seed), new Uint8Array(length))
-    const bytes = stream.slice(skip, length)
-    if (LITTLE) return new Uint32Array(bytes)
-    const words = new DataView(bytes)
-    return Uint32Array.from({ length: count * n }, (_, i) => words.getUint32(i * 4, true))
+    const stream = await crypto.subtle.encrypt(
+        { name: 'AES-CTR', counter, length: 64 },
+        await aesKey(shape.seed),
+        new Uint8Array(length)
+    )
+    return toWords(new Uint8Array(stream, skip, length - skip), Uint32Array)
+}
+
+// Each row of A in turn, made CHUNK at a time: fn(row, a, at), the row
+// being a[at] to a[at + n - 1].
+async function eachRow(shape, fn) {
+    for (let from = 0; from < shape.cols; from += CHUNK) {
+        const count = Math.min(CHUNK, shape.cols - from)
+        const a = await matrixRows(shape, from, count)
+        for (let i = 0; i < count; i++) fn(from + i, a, i * shape.n)
+    }
+}
+
+// Little-endian 32-bit words, as A's stream and the wire carry them, from
+// bytes and back, whatever the platform's own order.
+const LITTLE = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1
+
+export function toWords(bytes, Words = Int32Array) {
+    if (bytes.length % 4) throw new Error('pir: not whole words')
+    if (LITTLE) return new Words(bytes.slice().buffer)
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    return Words.from({ length: bytes.length / 4 }, (_, i) =>
+        view.getInt32(i * 4, true)
+    )
+}
+
+export function toBytes(words) {
+    if (LITTLE)
+        return new Uint8Array(words.buffer, words.byteOffset, words.byteLength)
+    const out = new Uint8Array(words.length * 4)
+    const view = new DataView(out.buffer)
+    words.forEach((w, i) => view.setInt32(i * 4, w, true))
+    return out
 }
 
 // ------------------------------------------------------------ randomness
 
 function randomWords(count) {
     const out = new Uint32Array(count)
-    for (let at = 0; at < count; at += RANDOM) crypto.getRandomValues(out.subarray(at, Math.min(count, at + RANDOM)))
+    for (let at = 0; at < count; at += RANDOM)
+        crypto.getRandomValues(out.subarray(at, Math.min(count, at + RANDOM)))
     return out
 }
 
@@ -118,10 +164,16 @@ const tables = new Map() // sigma -> cumulative probabilities of |x| = 0, 1, ...
 function cumulative(sigma) {
     if (!tables.has(sigma)) {
         const tail = Math.ceil(sigma * 12)
-        const weights = Array.from({ length: tail + 1 }, (_, x) => (x ? 2 : 1) * Math.exp(-(x * x) / (2 * sigma * sigma)))
+        const weights = Array.from(
+            { length: tail + 1 },
+            (_, x) => (x ? 2 : 1) * Math.exp(-(x * x) / (2 * sigma * sigma))
+        )
         const total = weights.reduce((a, b) => a + b, 0)
         let sum = 0
-        tables.set(sigma, Float64Array.from(weights.slice(0, -1), (w) => (sum += w / total)))
+        tables.set(
+            sigma,
+            Float64Array.from(weights.slice(0, -1), (w) => (sum += w / total))
+        )
     }
     return tables.get(sigma)
 }
@@ -148,7 +200,8 @@ export function toElements(bytes, shape = SHAPE) {
     const b = bits(shape.p)
     const out = new Uint16Array(elements(shape))
     for (let bit = 0; bit < shape.record * 8; bit++) {
-        if ((bytes[bit >> 3] >> (bit & 7)) & 1) out[Math.floor(bit / b)] |= 1 << bit % b
+        if ((bytes[bit >> 3] >> (bit & 7)) & 1)
+            out[Math.floor(bit / b)] |= 1 << (bit % b)
     }
     return out
 }
@@ -157,7 +210,8 @@ export function fromElements(values, shape = SHAPE) {
     const b = bits(shape.p)
     const out = new Uint8Array(shape.record)
     for (let bit = 0; bit < shape.record * 8; bit++) {
-        if ((values[Math.floor(bit / b)] >> bit % b) & 1) out[bit >> 3] |= 1 << (bit & 7)
+        if ((values[Math.floor(bit / b)] >> (bit % b)) & 1)
+            out[bit >> 3] |= 1 << (bit & 7)
     }
     return out
 }
@@ -167,11 +221,20 @@ export function fromElements(values, shape = SHAPE) {
 // group's rows.
 export function createTable(records, shape = SHAPE) {
     const { cols } = check(shape)
-    if (!records.length || records.length % cols) throw new Error(`pir: a table holds a multiple of ${cols} records`)
+    if (!records.length || records.length % cols)
+        throw new Error(`pir: a table holds a multiple of ${cols} records`)
     const per = elements(shape)
     const groups = records.length / cols
-    const table = { shape, groups, rows: groups * per, data: new Uint16Array(groups * per * cols), version: 0 }
-    records.forEach((bytes, index) => write(table, index, toElements(bytes, shape)))
+    const table = {
+        shape,
+        groups,
+        rows: groups * per,
+        data: new Uint16Array(groups * per * cols),
+        version: 0
+    }
+    records.forEach((bytes, index) =>
+        write(table, index, toElements(bytes, shape))
+    )
     return table
 }
 
@@ -193,13 +256,15 @@ function write(table, index, values) {
 // by element, for askers' hints (updateHint) and for answering older ones
 // (rewind); the table's version goes up by one.
 export function setRecords(table, updates) {
-    const changes = []
-    for (const [index, bytes] of updates) for (const change of write(table, index, toElements(bytes, table.shape))) changes.push(change)
+    const changes = updates.flatMap(([index, bytes]) =>
+        write(table, index, toElements(bytes, table.shape))
+    )
     table.version++
     return changes
 }
 
-export const setRecord = (table, index, bytes) => setRecords(table, [[index, bytes]])
+export const setRecord = (table, index, bytes) =>
+    setRecords(table, [[index, bytes]])
 
 // ------------------------------------------------------------ the peer
 
@@ -210,20 +275,15 @@ export async function hint(table) {
     const { shape, rows, data } = table
     const { cols, n } = shape
     const out = new Int32Array(rows * n)
-    for (let from = 0; from < cols; from += CHUNK) {
-        const count = Math.min(CHUNK, cols - from)
-        const a = await matrixRows(shape, from, count)
-        for (let i = 0; i < count; i++) {
-            const column = from + i
-            const at = i * n
-            for (let r = 0; r < rows; r++) {
-                const d = data[r * cols + column]
-                if (!d) continue
-                const h = r * n
-                for (let j = 0; j < n; j++) out[h + j] = (out[h + j] + Math.imul(d, a[at + j])) | 0
-            }
+    await eachRow(shape, (column, a, at) => {
+        for (let r = 0; r < rows; r++) {
+            const d = data[r * cols + column]
+            if (!d) continue
+            const h = r * n
+            for (let j = 0; j < n; j++)
+                out[h + j] = (out[h + j] + Math.imul(d, a[at + j])) | 0
         }
-    }
+    })
     return out
 }
 
@@ -231,12 +291,14 @@ export async function hint(table) {
 export function answer(table, query) {
     const { rows, data, shape } = table
     const { cols } = shape
-    if (query.length !== cols) throw new Error('pir: the query does not fit this table')
+    if (query.length !== cols)
+        throw new Error('pir: the query does not fit this table')
     const out = new Int32Array(rows)
     for (let r = 0; r < rows; r++) {
         let acc = 0
         const at = r * cols
-        for (let c = 0; c < cols; c++) acc = (acc + Math.imul(data[at + c], query[c])) | 0
+        for (let c = 0; c < cols; c++)
+            acc = (acc + Math.imul(data[at + c], query[c])) | 0
         out[r] = acc
     }
     return out
@@ -246,7 +308,8 @@ export function answer(table, query) {
 // asker's hint): linear, so each change's part is simply taken out.
 export function rewind(answered, query, changes) {
     const out = Int32Array.from(answered)
-    for (const { row, column, change } of changes) out[row] = (out[row] - Math.imul(change, query[column])) | 0
+    for (const { row, column, change } of changes)
+        out[row] = (out[row] - Math.imul(change, query[column])) | 0
     return out
 }
 
@@ -256,11 +319,19 @@ export function rewind(answered, query, changes) {
 export async function updateHint(hinted, changes, shape = SHAPE) {
     const { n } = shape
     const columns = [...new Set(changes.map((c) => c.column))]
-    const rowsOf = new Map(await Promise.all(columns.map(async (column) => [column, await matrixRows(shape, column, 1)])))
+    const rowsOf = new Map(
+        await Promise.all(
+            columns.map(async (column) => [
+                column,
+                await matrixRows(shape, column, 1)
+            ])
+        )
+    )
     for (const { row, column, change } of changes) {
         const a = rowsOf.get(column)
         const h = row * n
-        for (let j = 0; j < n; j++) hinted[h + j] = (hinted[h + j] + Math.imul(change, a[j])) | 0
+        for (let j = 0; j < n; j++)
+            hinted[h + j] = (hinted[h + j] + Math.imul(change, a[j])) | 0
     }
     return hinted
 }
@@ -271,16 +342,12 @@ export async function mask(shape = SHAPE) {
     const { cols, n } = check(shape)
     const secret = randomWords(n)
     const vector = noise(cols, shape.sigma)
-    for (let from = 0; from < cols; from += CHUNK) {
-        const count = Math.min(CHUNK, cols - from)
-        const a = await matrixRows(shape, from, count)
-        for (let i = 0; i < count; i++) {
-            let acc = vector[from + i]
-            const at = i * n
-            for (let j = 0; j < n; j++) acc = (acc + Math.imul(a[at + j], secret[j])) | 0
-            vector[from + i] = acc
-        }
-    }
+    await eachRow(shape, (column, a, at) => {
+        let acc = vector[column]
+        for (let j = 0; j < n; j++)
+            acc = (acc + Math.imul(a[at + j], secret[j])) | 0
+        vector[column] = acc
+    })
     return { shape, secret, vector, used: false }
 }
 
@@ -288,7 +355,8 @@ export async function mask(shape = SHAPE) {
 // secret would show the peer both columns (their difference).
 export function select(masked, column) {
     if (masked.used) throw new Error('pir: a mask is used for one query only')
-    if (!(column >= 0 && column < masked.shape.cols)) throw new Error('pir: no such column')
+    if (!(column >= 0 && column < masked.shape.cols))
+        throw new Error('pir: no such column')
     masked.used = true
     const query = Int32Array.from(masked.vector)
     query[column] = (query[column] + delta(masked.shape)) | 0
@@ -306,10 +374,12 @@ export function readRecord(answered, hinted, masked, group) {
     const values = new Uint16Array(per)
     for (let k = 0; k < per; k++) {
         const row = group * per + k
-        if (row >= answered.length) throw new Error('pir: no such group in this answer')
+        if (row >= answered.length)
+            throw new Error('pir: no such group in this answer')
         let acc = answered[row]
         const h = row * n
-        for (let j = 0; j < n; j++) acc = (acc - Math.imul(hinted[h + j], secret[j])) | 0
+        for (let j = 0; j < n; j++)
+            acc = (acc - Math.imul(hinted[h + j], secret[j])) | 0
         values[k] = (((acc + half) | 0) >>> shift) & (p - 1)
     }
     return fromElements(values, shape)

@@ -1,6 +1,4 @@
-// Waiting, and the date the banners print.
-
-export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// The date the banners print.
 
 // "YYYY/MM/DD hh:mm:ss", with a 12-hour clock.
 export function formatDate(date = new Date()) {

@@ -25,7 +25,10 @@ export function tracksOf(paths, { artist = 'Various Artists' } = {}) {
             const prefix = `${stem(track.name)} - `
             const extras = others
                 .filter((f) => f.name.startsWith(prefix))
-                .map((f) => ({ label: stem(f.name.slice(prefix.length)), path: f.path }))
+                .map((f) => ({
+                    label: stem(f.name.slice(prefix.length)),
+                    path: f.path
+                }))
                 .sort((a, b) => (a.label < b.label ? -1 : 1))
             return {
                 path: track.path,
@@ -36,12 +39,18 @@ export function tracksOf(paths, { artist = 'Various Artists' } = {}) {
         })
 }
 
+// A file's URL under a web seed's address (one ending in "/").
+export const webSeedUrl = (base, path) =>
+    base + path.split('/').map(encodeURIComponent).join('/')
+
 // The web seed URL of a file inside a station's torrent.
-export const seedUrl = (seed, path) =>
-    `${seed}/radio/${path.split('/').map(encodeURIComponent).join('/')}`
+export const seedUrl = (seed, path) => webSeedUrl(`${seed}/radio/`, path)
 
 // A frequency as the dial reads it: 59 -> "59.0", 59.1 -> "59.1".
-export const dial = (frequency) => (Number.isInteger(Number(frequency)) ? Number(frequency).toFixed(1) : String(frequency))
+export const dial = (frequency) =>
+    Number.isInteger(Number(frequency))
+        ? Number(frequency).toFixed(1)
+        : String(frequency)
 
 // Bytes a second, in the ticker's units (decimal, like the writer's MB).
 export function rate(bytes) {
@@ -56,7 +65,13 @@ export function rate(bytes) {
 // every song); peers are every other connection.
 export function stationStats(frequency, { wires, uploadSpeed, downloadSpeed }) {
     const seeders = wires.filter((wire) => wire.isSeeder).length
-    return { frequency: dial(frequency), seeders, peers: wires.length - seeders, up: rate(uploadSpeed), down: rate(downloadSpeed) }
+    return {
+        frequency: dial(frequency),
+        seeders,
+        peers: wires.length - seeders,
+        up: rate(uploadSpeed),
+        down: rate(downloadSpeed)
+    }
 }
 
 // A loop's order in shuffle mode: every song once, drawn anew each loop from
@@ -72,7 +87,9 @@ export function shuffledLoop(tracks, seed, round) {
     const order = seededShuffle(tracks, `${seed}/${round}`)
     const spread = Math.min(SPREAD, Math.floor(tracks.length / 3))
     if (!spread) return order
-    const tail = new Set(seededShuffle(tracks, `${seed}/${round - 1}`).slice(-spread))
+    const tail = new Set(
+        seededShuffle(tracks, `${seed}/${round - 1}`).slice(-spread)
+    )
     let j = spread
     for (let i = 0; i < spread; i++) {
         if (!tail.has(order[i])) continue
@@ -86,9 +103,14 @@ export function shuffledLoop(tracks, seed, round) {
 // What a station is playing at a moment, the same for every listener: the
 // station runs on UTC since 1970 as a loop of its songs, end to end, in
 // file order or, in shuffle mode, in an order drawn anew each time around
-// (shuffledLoop). Returns the song, how far into it
-// (seconds), and when it ends (ms), or null without song lengths.
-export function onAir(tracks, lengths = {}, { mode = 'normal', seed = '' } = {}, now = Date.now()) {
+// (shuffledLoop). Returns the song, how far into it (seconds), and when it
+// ends (ms), or null without song lengths.
+export function onAir(
+    tracks,
+    lengths = {},
+    { mode = 'normal', seed = '' } = {},
+    now = Date.now()
+) {
     const timed = tracks.filter((track) => lengths[track.path] > 0)
     if (!timed.length) return null
     const loop = timed.reduce((n, track) => n + lengths[track.path], 0)
@@ -98,7 +120,8 @@ export function onAir(tracks, lengths = {}, { mode = 'normal', seed = '' } = {},
     let into = seconds - round * loop
     for (const track of order) {
         const length = lengths[track.path]
-        if (into < length) return { track, offset: into, ends: now + (length - into) * 1000 }
+        if (into < length)
+            return { track, offset: into, ends: now + (length - into) * 1000 }
         into -= length
     }
     // Rounding at the very end of a loop: the next loop's first song.

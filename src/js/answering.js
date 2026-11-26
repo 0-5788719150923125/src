@@ -11,7 +11,7 @@
 // came and went touch it (contexts.js createShelves).
 
 import * as library from './library.js'
-import { ANSWERED, EXTENSION, privateExtension, swarmFile } from './private.js'
+import { ANSWERED, privateExtension, send, swarmFile } from './private.js'
 import { announce, getClient } from './torrent.js'
 
 const AGAIN = 250 // ms in which lines kept count as one change
@@ -23,12 +23,15 @@ let joined = null
 // goes to the one that takes its kind.
 export function join({ asker = null, answerer = null } = {}) {
     if (joined) return joined
-    const Private = privateExtension((message, wire) => {
-        if (message.type === 'open' || !ANSWERED.has(message.type)) asker?.handle(message, wire)
-        if (message.type !== 'open' && ANSWERED.has(message.type)) answerer?.handle(message, wire)
-    })
+    const Private = privateExtension((message, wire) =>
+        (ANSWERED.has(message.type) ? answerer : asker)?.handle(message, wire)
+    )
     joined = getClient()
-        .then((client) => client.seed(swarmFile(), { announce: announce() }).on('wire', (wire) => wire.use(Private)))
+        .then((client) =>
+            client
+                .seed(swarmFile(), { announce: announce() })
+                .on('wire', (wire) => wire.use(Private))
+        )
         .catch((err) => console.warn('answering:', err.message || err))
     return joined
 }
@@ -36,18 +39,16 @@ export function join({ asker = null, answerer = null } = {}) {
 // An answerer whose table a worker keeps, from the library, a line at a
 // time.
 export function answerer() {
-    const worker = new Worker(new URL('./answer.worker.js', import.meta.url), { type: 'module' })
+    const worker = new Worker(new URL('./answer.worker.js', import.meta.url), {
+        type: 'module'
+    })
     const ids = new WeakMap() // wire -> id
     const wires = new Map() // id -> wire
     let next = 0
     let status = null
     worker.onmessage = ({ data }) => {
-        const wire = wires.get(data.wire)
-        if (data.send && wire && !wire.destroyed) {
-            try {
-                wire.extended(EXTENSION, data.send)
-            } catch {}
-        }
+        if (data.send && wires.has(data.wire))
+            send(wires.get(data.wire), data.send)
         if (data.status) status = data.status
     }
     worker.onerror = (event) => console.warn('answering:', event.message)
@@ -66,12 +67,16 @@ export function answerer() {
     let timer = null
     const load = (after = 0) => {
         clearTimeout(timer)
-        timer = setTimeout(() => worker.postMessage({ library: library.snapshot() }), after)
+        timer = setTimeout(
+            () => worker.postMessage({ library: library.snapshot() }),
+            after
+        )
     }
     library.watch(() => load(AGAIN))
     load()
     return {
-        handle: (message, wire) => worker.postMessage({ message, wire: idOf(wire) }),
+        handle: (message, wire) =>
+            worker.postMessage({ message, wire: idOf(wire) }),
         status: () => status
     }
 }

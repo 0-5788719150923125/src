@@ -44,7 +44,11 @@ const git = (args, cwd) =>
         cwd,
         timeout: 300000,
         maxBuffer: 16 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1' }
+        env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: '0',
+            GIT_LFS_SKIP_SMUDGE: '1'
+        }
     })
 
 // Clone the repository, or bring the clone up to date. Returns its folder.
@@ -56,7 +60,19 @@ export async function fetchSource({ url, ref }, root) {
     } else {
         fs.rmSync(dir, { recursive: true, force: true })
         fs.mkdirSync(root, { recursive: true })
-        await git(['clone', '--depth', '1', '--single-branch', '--quiet', ...(ref ? ['--branch', ref] : []), url, dir], root)
+        await git(
+            [
+                'clone',
+                '--depth',
+                '1',
+                '--single-branch',
+                '--quiet',
+                ...(ref ? ['--branch', ref] : []),
+                url,
+                dir
+            ],
+            root
+        )
     }
     return dir
 }
@@ -66,9 +82,26 @@ export async function fetchSource({ url, ref }, root) {
 const PROSE = /\.(md|markdown|mdx|txt|rst|adoc|asciidoc|org|tex)$/i
 const CODE =
     /\.(js|mjs|cjs|jsx|ts|tsx|py|rb|go|rs|java|kt|kts|scala|c|h|cc|cpp|hpp|cxx|cs|fs|swift|m|php|pl|lua|r|jl|ex|exs|erl|hs|ml|clj|dart|zig|nim|sh|bash|zsh|fish|ps1|sql|html|htm|css|scss|sass|less|vue|svelte|astro|yaml|yml|toml|ini|cfg|graphql|proto|tf|nix|dockerfile|makefile|cmake|gradle)$/i
-const BARE = /^(readme|license|licence|copying|authors|contributing|changelog|changes|notice|dockerfile|makefile|justfile)$/i
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'vendor', 'third_party', 'dist', 'build', 'out', 'target', 'coverage', '__pycache__', '.venv', 'venv', '.next', '.cache'])
-const SKIP_FILES = /(\.min\.(js|css)|\.map|\.lock|-lock\.(json|yaml)|^go\.sum|\.snap)$/i
+const BARE =
+    /^(readme|license|licence|copying|authors|contributing|changelog|changes|notice|dockerfile|makefile|justfile)$/i
+const SKIP_DIRS = new Set([
+    '.git',
+    'node_modules',
+    'vendor',
+    'third_party',
+    'dist',
+    'build',
+    'out',
+    'target',
+    'coverage',
+    '__pycache__',
+    '.venv',
+    'venv',
+    '.next',
+    '.cache'
+])
+const SKIP_FILES =
+    /(\.min\.(js|css)|\.map|\.lock|-lock\.(json|yaml)|^go\.sum|\.snap)$/i
 export const MAX_FILE = 256 * 1024
 
 // The text of one clone: README first, then other prose, then code, each
@@ -79,21 +112,35 @@ export function collect(dir) {
         for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
             const full = path.join(folder, entry.name)
             if (entry.isDirectory()) {
-                if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) walk(full)
+                if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.'))
+                    walk(full)
                 continue
             }
             if (!entry.isFile() || SKIP_FILES.test(entry.name)) continue
             const stem = entry.name.replace(/\.[^.]+$/, '')
-            const prose = PROSE.test(entry.name) || (BARE.test(stem) && !CODE.test(entry.name))
-            if (!prose && !CODE.test(entry.name) && !BARE.test(entry.name)) continue
+            const prose =
+                PROSE.test(entry.name) ||
+                (BARE.test(stem) && !CODE.test(entry.name))
+            if (!prose && !CODE.test(entry.name) && !BARE.test(entry.name))
+                continue
             const size = fs.statSync(full).size
             if (!size || size > MAX_FILE) continue
-            files.push({ path: path.relative(dir, full), full, prose, readme: /^readme/i.test(entry.name) && path.dirname(full) === dir })
+            files.push({
+                path: path.relative(dir, full),
+                full,
+                prose,
+                readme:
+                    /^readme/i.test(entry.name) && path.dirname(full) === dir
+            })
         }
     }
     walk(dir)
     const rank = (f) => (f.readme ? 0 : f.prose ? 1 : 2)
-    files.sort((a, b) => rank(a) - rank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    files.sort(
+        (a, b) =>
+            rank(a) - rank(b) ||
+            (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+    )
     const texts = []
     for (const file of files) {
         const buf = fs.readFileSync(file.full)
@@ -110,10 +157,14 @@ export async function readSources(sources, root, log = console.log) {
         try {
             const dir = await fetchSource(source, root)
             const text = collect(dir)
-            log(`source ${source.url}${source.ref ? `#${source.ref}` : ''}: ${(text.length / 1e6).toFixed(2)}M characters`)
+            log(
+                `source ${source.url}${source.ref ? `#${source.ref}` : ''}: ${(text.length / 1e6).toFixed(2)}M characters`
+            )
             texts.push(text)
         } catch (err) {
-            log(`source ${source.url}: skipped (${(err.stderr || err.message || String(err)).trim().split('\n').pop()})`)
+            log(
+                `source ${source.url}: skipped (${(err.stderr || err.message || String(err)).trim().split('\n').pop()})`
+            )
         }
     }
     return texts.join('\n\n')

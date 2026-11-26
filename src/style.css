@@ -251,7 +251,12 @@ output pre {
   /* Now and then a wave of fading runs along the guess, left to right, to
      show it is live. The mask is three times the guess's width; sliding it
      carries the faded middle across, then it rests. */
-  mask-image: linear-gradient(90deg, #000 40%, rgba(0, 0, 0, 0.2) 50%, #000 60%);
+  mask-image: linear-gradient(
+    90deg,
+    #000 40%,
+    rgba(0, 0, 0, 0.2) 50%,
+    #000 60%
+  );
   mask-size: 300% 100%;
   mask-position: 100% 0;
   animation: wave 3s linear infinite;
@@ -335,8 +340,17 @@ output pre {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: conic-gradient(from 90deg, transparent 0deg, transparent 240deg, rgba(255, 255, 255, 0.6) 360deg);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 0.14em), #000 calc(100% - 0.1em));
+  background: conic-gradient(
+    from 90deg,
+    transparent 0deg,
+    transparent 240deg,
+    rgba(255, 255, 255, 0.6) 360deg
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 0.14em),
+    #000 calc(100% - 0.1em)
+  );
   animation: trail var(--spin) var(--lag) infinite linear;
 }
 
@@ -371,7 +385,8 @@ output pre {
     transform: rotateZ(0deg) translateX(2.45em) rotateZ(0deg) rotateY(-65deg);
   }
   100% {
-    transform: rotateZ(360deg) translateX(2.45em) rotateZ(-360deg) rotateY(-65deg);
+    transform: rotateZ(360deg) translateX(2.45em) rotateZ(-360deg)
+      rotateY(-65deg);
   }
 }
 

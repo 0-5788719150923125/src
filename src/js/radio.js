@@ -32,7 +32,14 @@ import { config } from './config.js'
 import { link, say } from './print.js'
 import { shuffle } from './random.js'
 import { state } from './state.js'
-import { AUDIO, onAir, seedUrl, stationStats, tracksOf } from './station.js'
+import {
+    AUDIO,
+    onAir,
+    seedUrl,
+    stationStats,
+    tracksOf,
+    webSeedUrl
+} from './station.js'
 import { html, t } from './text.js'
 import { announce, getClient, getServer } from './torrent.js'
 
@@ -80,7 +87,9 @@ export function radio() {
         stop()
         return say(t('radio.off'))
     }
-    const [frequency] = Object.keys(config.stations).sort((a, b) => parseFloat(a) - parseFloat(b))
+    const [frequency] = Object.keys(config.stations).sort(
+        (a, b) => parseFloat(a) - parseFloat(b)
+    )
     if (!frequency) return say(t('radio.off-air'))
     listen(frequency)
 }
@@ -99,7 +108,13 @@ async function listen(frequency) {
     state.set('radio.frequency', `${frequency}FM`)
     const station = config.stations[frequency]
     const sources = torrentUrls(frequency)
-    say(html('radio.loading', { station: sources.length ? link(sources[0], station.name) : station.name }))
+    say(
+        html('radio.loading', {
+            station: sources.length
+                ? link(sources[0], station.name)
+                : station.name
+        })
+    )
     // The streaming service worker starts while the torrent loads.
     getServer()
     state.set('radio.station', station.name)
@@ -109,29 +124,42 @@ async function listen(frequency) {
     } catch (err) {
         console.warn(err)
         if (mine === session) state.delete('radio')
-        return say(config.seed ? t('radio.unreachable', { seed: config.seed }) : t('radio.off-air'))
+        return say(
+            config.seed
+                ? t('radio.unreachable', { seed: config.seed })
+                : t('radio.off-air')
+        )
     }
     // A page that started without the web seed checks again on every tune.
     if (config.seed && !torrent.webSeed) {
-        torrent.webSeed = await fetch(seedTorrentUrl(frequency), { method: 'HEAD' }).then((r) => r.ok, () => false)
+        torrent.webSeed = await fetch(seedTorrentUrl(frequency), {
+            method: 'HEAD'
+        }).then(
+            (r) => r.ok,
+            () => false
+        )
     }
     if (mine !== session) return
     // Without a web seed the songs come from peers; give them a moment,
     // then call in the mirror.
-    if (!torrent.webSeed && !peers(torrent)) await firstPeer(torrent, PEER_WAIT)
+    if (alone(torrent)) await firstPeer(torrent, PEER_WAIT)
     if (mine !== session) return
-    if (!torrent.webSeed && !peers(torrent)) callMirror(torrent)
+    if (alone(torrent)) callMirror(torrent)
     const tracks = tracksOf(
         torrent.files.map((f) => f.path),
         station
     )
-    if (!tracks.length) return say(t('radio.unreachable', { seed: config.seed }))
+    if (!tracks.length)
+        return say(t('radio.unreachable', { seed: config.seed }))
     // With no one to get songs from, play what this browser holds, if
     // anything, in an order of its own; else wait on the schedule, and the
     // song plays when someone turns up.
-    if (!torrent.webSeed && !torrent.mirror && !peers(torrent)) {
-        const held = tracks.filter((track) => fileAt(torrent, track.path).progress === 1)
-        if (held.length) return play(mine, torrent, ownOrder(held, station.mode), null)
+    if (alone(torrent) && !torrent.mirror) {
+        const held = tracks.filter(
+            (track) => fileAt(torrent, track.path).progress === 1
+        )
+        if (held.length)
+            return play(mine, torrent, ownOrder(held, station.mode), null)
         say(t('radio.searching'))
     }
     const scheduled = schedule(tracks, station, frequency)
@@ -150,7 +178,9 @@ function schedule(tracks, station, frequency) {
         first: () => at(Date.now()),
         after: (played) => {
             const now = at(Date.now())
-            return now.track === played.track ? { ...at(now.ends + 1), offset: 0 } : now
+            return now.track === played.track
+                ? { ...at(now.ends + 1), offset: 0 }
+                : now
         },
         upNext: (playing) => at(playing.ends + 1).track
     }
@@ -168,17 +198,25 @@ function ownOrder(tracks, mode) {
     }
 }
 
-const seedTorrentUrl = (frequency) => `${config.seed}/radio/${frequency}.torrent`
+const seedTorrentUrl = (frequency) =>
+    `${config.seed}/radio/${frequency}.torrent`
 // Where a station's .torrent is read from: the web seed first (the seeder
 // writes it there, so it is never stale), then the site's bundled copy.
-const torrentUrls = (frequency) => [config.seed && seedTorrentUrl(frequency), config.stations[frequency]?.torrent].filter(Boolean)
+const torrentUrls = (frequency) =>
+    [
+        config.seed && seedTorrentUrl(frequency),
+        config.stations[frequency]?.torrent
+    ].filter(Boolean)
 const fileAt = (torrent, path) => torrent.files.find((f) => f.path === path)
 // Peers that are browsers or seeders, not web seeds.
-const peers = (torrent) => torrent.wires.filter((wire) => wire.type !== 'webSeed').length
+const peers = (torrent) =>
+    torrent.wires.filter((wire) => wire.type !== 'webSeed').length
+// No web seed, and no peer to get songs from.
+const alone = (torrent) => !torrent.webSeed && !peers(torrent)
 
 // The mirror holds each version of a station under its info hash.
 const mirrorBase = (torrent) => `${config.mirror}/${torrent.infoHash}/`
-const mirrorUrl = (torrent, path) => mirrorBase(torrent) + path.split('/').map(encodeURIComponent).join('/')
+const mirrorUrl = (torrent, path) => webSeedUrl(mirrorBase(torrent), path)
 
 function callMirror(torrent) {
     if (!config.mirror || torrent.mirror || torrent.destroyed) return
@@ -192,9 +230,12 @@ function dismissMirror(torrent) {
     torrent.mirror = null
 }
 
-// Once the file is here, the swarm is enough again, if there is one.
-function whenHeld(torrent, file) {
-    if (file.progress < 1) file.once('done', () => peers(torrent) && dismissMirror(torrent))
+// Download a whole song at `priority`. Once it is here, the swarm is enough
+// again, if there is one.
+function fetchSong(torrent, file, priority) {
+    file.select(priority)
+    if (file.progress < 1)
+        file.once('done', () => peers(torrent) && dismissMirror(torrent))
 }
 
 // Resolves at the torrent's first peer, or after `ms`.
@@ -224,7 +265,11 @@ async function fetchTorrent(frequency) {
             // pages cannot keep their own addresses in Cache Storage, and
             // need not: the .torrent is in the extension.)
             if (cache) await cache.put(key, response).catch(() => {})
-            return { buf, webSeed: Boolean(config.seed) && url === seedTorrentUrl(frequency) }
+            return {
+                buf,
+                webSeed:
+                    Boolean(config.seed) && url === seedTorrentUrl(frequency)
+            }
         } catch (err) {
             error = err
         }
@@ -243,13 +288,19 @@ function tune(frequency) {
             const client = await getClient()
             const urlList = config.seed ? [`${config.seed}/radio/`] : []
             const torrent = await new Promise((resolve, reject) => {
-                const t = client.add(buf, { deselect: true, announce: announce(), urlList })
-                t.once('ready', () => resolve(t))
-                t.once('error', reject)
+                const added = client.add(buf, {
+                    deselect: true,
+                    announce: announce(),
+                    urlList
+                })
+                added.once('ready', () => resolve(added))
+                added.once('error', reject)
             })
             torrent.webSeed = webSeed
             report(frequency, torrent)
-            forgetOldVersions(torrent)
+            forgetOldVersions(torrent).catch((err) =>
+                console.warn('radio: old versions stay:', err.message || err)
+            )
             return torrent
         })()
         adding.catch(() => torrents.delete(frequency))
@@ -263,17 +314,20 @@ function tune(frequency) {
 // array. Speeds are WebTorrent's, over its last few seconds.
 const seeding = new Map() // frequency -> the station's numbers, or null
 
-function showSeeding() {
-    const shown = [...seeding.values()].filter(Boolean)
-    if (!shown.length) state.delete('seeding')
-    else state.set('seeding', shown.length === 1 ? shown[0] : shown)
-}
-
 function report(frequency, torrent) {
     const update = () => {
-        const held = torrent.files.some((f) => AUDIO.test(f.name) && f.progress === 1)
-        seeding.set(frequency, held || torrent.wires.length ? stationStats(frequency, torrent) : null)
-        showSeeding()
+        const held = torrent.files.some(
+            (f) => AUDIO.test(f.name) && f.progress === 1
+        )
+        seeding.set(
+            frequency,
+            held || torrent.wires.length
+                ? stationStats(frequency, torrent)
+                : null
+        )
+        const shown = [...seeding.values()].filter(Boolean)
+        if (!shown.length) state.delete('seeding')
+        else state.set('seeding', shown.length === 1 ? shown[0] : shown)
     }
     update()
     setInterval(update, 2000)
@@ -284,17 +338,17 @@ function report(frequency, torrent) {
 // and any station that is no longer on the dial (59 became 59.1). Rooms
 // are stored as "src-focus-<room>", never a bare number.
 async function forgetOldVersions(torrent) {
-    try {
-        const root = await navigator.storage.getDirectory()
-        const current = `${torrent.name} - ${torrent.infoHash.slice(0, 8)}`
-        for await (const name of root.keys()) {
-            const stored = /^(\d+(?:\.\d+)?) - [0-9a-f]{8}$/.exec(name)
-            if (!stored || name === current) continue
-            if (stored[1] === torrent.name || !Object.hasOwn(config.stations, stored[1])) {
-                await root.removeEntry(name, { recursive: true })
-            }
-        }
-    } catch {}
+    const root = await navigator.storage.getDirectory()
+    const current = `${torrent.name} - ${torrent.infoHash.slice(0, 8)}`
+    for await (const name of root.keys()) {
+        const stored = /^(\d+(?:\.\d+)?) - [0-9a-f]{8}$/.exec(name)
+        if (!stored || name === current) continue
+        if (
+            stored[1] === torrent.name ||
+            !Object.hasOwn(config.stations, stored[1])
+        )
+            await root.removeEntry(name, { recursive: true })
+    }
 }
 
 // At page load: join every station, so the songs this browser holds are
@@ -305,7 +359,9 @@ export async function restore() {
     for (const frequency of Object.keys(config.stations)) {
         tune(frequency)
             .then((torrent) => setTimeout(() => cache(torrent), CACHE_DELAY))
-            .catch((err) => console.warn(`radio ${frequency}:`, err.message || err))
+            .catch((err) =>
+                console.warn(`radio ${frequency}:`, err.message || err)
+            )
     }
 }
 
@@ -316,17 +372,18 @@ async function cache(torrent) {
     if (navigator.connection?.saveData || torrent.destroyed) return
     const songs = torrent.files.filter((f) => AUDIO.test(f.name))
     const missing = CACHE_SONGS - songs.filter((f) => f.progress === 1).length
-    const wanted = shuffle(songs.filter((f) => f.progress < 1)).slice(0, Math.max(0, missing))
+    const wanted = shuffle(songs.filter((f) => f.progress < 1)).slice(
+        0,
+        Math.max(0, missing)
+    )
     if (!wanted.length) return
-    if (!torrent.webSeed && !peers(torrent)) await firstPeer(torrent, PEER_WAIT)
-    if (!torrent.webSeed && !peers(torrent)) callMirror(torrent)
-    for (const file of wanted) {
-        file.select(0)
-        whenHeld(torrent, file)
-    }
+    if (alone(torrent)) await firstPeer(torrent, PEER_WAIT)
+    if (alone(torrent)) callMirror(torrent)
+    for (const file of wanted) fetchSong(torrent, file, 0)
     let last = torrent.downloaded
     const watch = setInterval(() => {
-        if (torrent.destroyed || wanted.every((f) => f.progress === 1)) return clearInterval(watch)
+        if (torrent.destroyed || wanted.every((f) => f.progress === 1))
+            return clearInterval(watch)
         if (torrent.downloaded - last < STARVED_BYTES) callMirror(torrent)
         last = torrent.downloaded
     }, STARVED_WAIT)
@@ -340,14 +397,10 @@ async function play(mine, torrent, program, played) {
     // Download the whole song, not just what the stream reads, so it stays;
     // ahead of any song fetched in the background. Once it is here, the
     // next song downloads, so the change of song has nothing to wait for.
-    file.select(1)
-    whenHeld(torrent, file)
-    const upNext = () => {
-        if (mine !== session) return
-        const next = fileAt(torrent, program.upNext(playing).path)
-        next.select(1)
-        whenHeld(torrent, next)
-    }
+    fetchSong(torrent, file, 1)
+    const upNext = () =>
+        mine === session &&
+        fetchSong(torrent, fileAt(torrent, program.upNext(playing).path), 1)
     if (file.progress === 1) upNext()
     else file.once('done', upNext)
     const server = await getServer()
@@ -376,7 +429,8 @@ async function play(mine, torrent, program, played) {
     }
 
     // A song that does not start, or stalls, calls in the mirror.
-    let stalled = setTimeout(() => mine === session && callMirror(torrent), START_WAIT)
+    const rescue = () => mine === session && callMirror(torrent)
+    let stalled = setTimeout(rescue, START_WAIT)
     let announced = false
     audio.onplaying = () => {
         clearTimeout(stalled)
@@ -386,7 +440,7 @@ async function play(mine, torrent, program, played) {
     }
     audio.onwaiting = () => {
         clearTimeout(stalled)
-        stalled = setTimeout(() => mine === session && callMirror(torrent), STALL_WAIT)
+        stalled = setTimeout(rescue, STALL_WAIT)
     }
     audio.onended = () => {
         clearTimeout(stalled)
@@ -394,7 +448,8 @@ async function play(mine, torrent, program, played) {
     }
     audio.onerror = () => mine === session && say(t('radio.failed'))
     audio.play().catch((err) => {
-        if (mine === session && err.name !== 'AbortError') say(t('radio.failed'))
+        if (mine === session && err.name !== 'AbortError')
+            say(t('radio.failed'))
     })
 }
 
@@ -409,8 +464,15 @@ function fileUrl(torrent, path, server) {
 function nowPlaying(torrent, { artist, title, path, extras }, server) {
     const url = fileUrl(torrent, path, server)
     const vars = { artist, title: url ? link(url, title) : title }
-    const links = extras.map((extra) => [fileUrl(torrent, extra.path, server), extra.label]).filter(([href]) => href)
+    const links = extras
+        .map((extra) => [fileUrl(torrent, extra.path, server), extra.label])
+        .filter(([href]) => href)
     if (!links.length) return html('radio.playing', vars)
-    const extrasHtml = links.map(([href, label]) => link(href, label).html).join(', ')
-    return html('radio.playing-with-extras', { ...vars, extras: { html: extrasHtml } })
+    const extrasHtml = links
+        .map(([href, label]) => link(href, label).html)
+        .join(', ')
+    return html('radio.playing-with-extras', {
+        ...vars,
+        extras: { html: extrasHtml }
+    })
 }

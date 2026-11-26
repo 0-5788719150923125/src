@@ -15,9 +15,24 @@
 // Nothing here touches the DOM, so it also runs in workers and under Node.
 
 export const escape = (text) =>
-    String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+    String(text).replace(
+        /[&<>"']/g,
+        (c) =>
+            ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[c]
+    )
 
-const stripComments = (source) => source.replace(/<!--[\s\S]*?-->/g, '')
+// The lines of some Markdown, its comments dropped.
+const linesOf = (source) =>
+    source
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/\r/g, '')
+        .split('\n')
 
 const isFence = (line) => /^\s*```/.test(line)
 
@@ -37,12 +52,18 @@ export function entries(source) {
     const found = {}
     let current = null
     let fenced = false
-    for (const line of stripComments(source).replace(/\r/g, '').split('\n')) {
+    for (const line of linesOf(source)) {
         if (isFence(line)) fenced = !fenced
-        if (!fenced && line.startsWith('# ')) found[(current = line.slice(2).trim())] = []
+        if (!fenced && line.startsWith('# '))
+            found[(current = line.slice(2).trim())] = []
         else if (current !== null) found[current].push(line)
     }
-    return Object.fromEntries(Object.entries(found).map(([name, lines]) => [name, dropBlankEnds(lines).join('\n')]))
+    return Object.fromEntries(
+        Object.entries(found).map(([name, lines]) => [
+            name,
+            dropBlankEnds(lines).join('\n')
+        ])
+    )
 }
 
 // ------------------------------------------------------------ blocks
@@ -62,24 +83,38 @@ function blocks(lines) {
         if (isFence(line)) {
             const indent = indentOf(line)
             const body = []
-            for (i++; i < lines.length && !isFence(lines[i]); i++) body.push(lines[i].slice(Math.min(indent, indentOf(lines[i]))))
+            for (i++; i < lines.length && !isFence(lines[i]); i++)
+                body.push(lines[i].slice(Math.min(indent, indentOf(lines[i]))))
             found.push({ type: 'code', text: body.join('\n') })
             i++
             continue
         }
         const heading = /^(#{1,6}) +(.*)$/.exec(line)
         if (heading) {
-            found.push({ type: 'heading', level: heading[1].length, text: heading[2].trim() })
+            found.push({
+                type: 'heading',
+                level: heading[1].length,
+                text: heading[2].trim()
+            })
             i++
             continue
         }
         const marker = LIST.exec(line)
         if (marker) {
-            const list = { type: 'list', ordered: /\d/.test(marker[2]), items: [] }
+            const list = {
+                type: 'list',
+                ordered: /\d/.test(marker[2]),
+                items: []
+            }
             const indent = marker[1].length
             while (i < lines.length) {
                 const start = LIST.exec(lines[i])
-                if (!start || start[1].length !== indent || /\d/.test(start[2]) !== list.ordered) break
+                if (
+                    !start ||
+                    start[1].length !== indent ||
+                    /\d/.test(start[2]) !== list.ordered
+                )
+                    break
                 const column = start[0].length
                 const item = [lines[i].slice(column)]
                 // An item runs on while its lines are indented past the
@@ -105,7 +140,13 @@ function blocks(lines) {
             continue
         }
         const paragraph = []
-        while (i < lines.length && lines[i].trim() && !isFence(lines[i]) && !/^#{1,6} /.test(lines[i]) && !LIST.exec(lines[i])) {
+        while (
+            i < lines.length &&
+            lines[i].trim() &&
+            !isFence(lines[i]) &&
+            !/^#{1,6} /.test(lines[i]) &&
+            !LIST.exec(lines[i])
+        ) {
             paragraph.push(lines[i++])
         }
         if (!paragraph.length) paragraph.push(lines[i++])
@@ -117,10 +158,19 @@ function blocks(lines) {
 // A paragraph's lines, each printed: leading spaces and runs of two or
 // more become no-break spaces, so they survive HTML.
 const linesHtml = (lines) =>
-    lines.map((line) => inline(line.trimEnd().replace(/^ +| {2,}/g, (s) => ' '.repeat(s.length)))).join('<br>')
+    lines
+        .map((line) =>
+            inline(
+                line
+                    .trimEnd()
+                    .replace(/^ +| {2,}/g, (s) => ' '.repeat(s.length))
+            )
+        )
+        .join('<br>')
 
 function blockHtml(block) {
-    if (block.type === 'heading') return `<h${block.level}>${inline(block.text)}</h${block.level}>`
+    if (block.type === 'heading')
+        return `<h${block.level}>${inline(block.text)}</h${block.level}>`
     if (block.type === 'code') return `<pre>${escape(block.text)}</pre>`
     if (block.type === 'paragraph') return `<p>${linesHtml(block.lines)}</p>`
     const tag = block.ordered ? 'ol' : 'ul'
@@ -128,7 +178,12 @@ function blockHtml(block) {
         // An item's first paragraph sits in the item itself, as in a tight
         // list; anything after it is a block of its own.
         const [first, ...rest] = blocks(lines)
-        const head = first?.type === 'paragraph' ? linesHtml(first.lines) : first ? blockHtml(first) : ''
+        const head =
+            first?.type === 'paragraph'
+                ? linesHtml(first.lines)
+                : first
+                  ? blockHtml(first)
+                  : ''
         return `<li>${head}${rest.map(blockHtml).join('')}</li>`
     })
     return `<${tag}>${items.join('')}</${tag}>`
@@ -137,18 +192,23 @@ function blockHtml(block) {
 // The HTML of some Markdown. With `inline`, a lone paragraph comes back
 // without its <p>, to sit in a line of its own.
 export function render(markdown, { inline: bare = false } = {}) {
-    const found = blocks(stripComments(markdown).replace(/\r/g, '').split('\n'))
-    if (bare && found.length === 1 && found[0].type === 'paragraph') return linesHtml(found[0].lines)
+    const found = blocks(linesOf(markdown))
+    if (bare && found.length === 1 && found[0].type === 'paragraph')
+        return linesHtml(found[0].lines)
     return found.map(blockHtml).join('\n')
 }
 
 // The items of the first list, as written; an item that is only a link
 // comes back as { text, url }.
 export function items(markdown) {
-    const list = blocks(stripComments(markdown).split('\n')).find((block) => block.type === 'list')
+    const list = blocks(linesOf(markdown)).find(
+        (block) => block.type === 'list'
+    )
     return (list?.items ?? []).map((lines) => {
         const text = lines.join('\n').trim()
-        const link = /^\[([^\]]*)\]\(([^)\s]+(?:\([^)\s]*\)[^)\s]*)*)\)$/.exec(text)
+        const link = /^\[([^\]]*)\]\(([^)\s]+(?:\([^)\s]*\)[^)\s]*)*)\)$/.exec(
+            text
+        )
         return link ? { text: link[1], url: link[2] } : text
     })
 }
@@ -184,10 +244,16 @@ function bracket(text, at) {
     const label = text.slice(at + 1, end)
     if (text[end + 1] === '(') {
         const close = closing(text, end + 1)
-        if (close > 0) return { label, url: text.slice(end + 2, close).trim(), next: close + 1 }
+        if (close > 0)
+            return {
+                label,
+                url: text.slice(end + 2, close).trim(),
+                next: close + 1
+            }
     }
     const span = /^\{\.([\w-]+)\}/.exec(text.slice(end + 1))
-    if (span) return { label, className: span[1], next: end + 1 + span[0].length }
+    if (span)
+        return { label, className: span[1], next: end + 1 + span[0].length }
     return null
 }
 
@@ -214,7 +280,6 @@ export function inline(text) {
     let i = 0
     outer: while (i < text.length) {
         const c = text[i]
-        const rest = text.slice(i)
         if (c === '\\' && PUNCTUATION.test(text[i + 1] ?? '')) {
             html += escape(text[i + 1])
             i += 2
@@ -247,7 +312,9 @@ export function inline(text) {
                 continue
             }
         }
-        const raw = (c === '<' && TAG.exec(rest)) || (c === '&' && ENTITY.exec(rest))
+        const raw =
+            (c === '<' && TAG.exec(text.slice(i))) ||
+            (c === '&' && ENTITY.exec(text.slice(i)))
         if (raw) {
             html += raw[0]
             i += raw[0].length

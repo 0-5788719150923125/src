@@ -23,25 +23,21 @@
 // changes its own slot and no other: a chat line changes a few slots, and
 // askers are sent only those (private.js).
 //
-// Imports nothing; meant to be shared by the browser and the stack's peers.
+// Shared by the browser and the stack's peers.
+
+import { folded } from './memory.js'
 
 export const RECORD = 256 // bytes, as pir.js's SHAPE.record
 export const KEY = 12 // characters the record is chosen by
 export const TAGS = [24, 48, 64] // longer contexts an entry is tagged with
 export const SPAN = 30 // bytes of continuation an entry carries, at most
 export const NEAR = 0.75 // matches within a quarter of the longest count too (as memory.js)
-const HEADER = 2 * (1 + TAGS.length) + 2
+const COUNT_AT = 2 * (1 + TAGS.length) // in a slot: the tags, then the count and the length
+const HEADER = COUNT_AT + 2
 export const SLOT = HEADER + SPAN // bytes
 export const SLOTS = Math.floor(RECORD / SLOT)
 const KEY_SEED = 1
 const TAG_SEED = 2
-
-// As memory.js: matching ignores case, where lowercasing keeps every
-// character in its place.
-const folded = (text) => {
-    const lower = text.toLowerCase()
-    return lower.length === text.length ? lower : text
-}
 
 const isSpace = (ch) => ch === ' ' || ch === '\n' || ch === '\t' || ch === '\r'
 
@@ -49,7 +45,8 @@ const isSpace = (ch) => ch === ' ' || ch === '\n' || ch === '\t' || ch === '\r'
 // contexts land far apart.
 function hash(text, seed) {
     let h = (0x811c9dc5 ^ seed) >>> 0
-    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+    for (let i = 0; i < text.length; i++)
+        h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
     h = Math.imul(h ^ (h >>> 16), 0x85ebca6b)
     h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
     return (h ^ (h >>> 16)) >>> 0
@@ -59,7 +56,10 @@ const tag = (text) => 1 + (hash(text, TAG_SEED) % 65535)
 
 // The tags of the contexts before position `at` of folded text: KEY's, then
 // each of TAGS' (0 where the text is too short).
-const tagsAt = (match, at) => [tag(match.slice(at - KEY, at)), ...TAGS.map((k) => (at >= k ? tag(match.slice(at - k, at)) : 0))]
+const tagsAt = (match, at) => [
+    tag(match.slice(at - KEY, at)),
+    ...TAGS.map((k) => (at >= k ? tag(match.slice(at - k, at)) : 0))
+]
 
 // A continuation as at most SPAN bytes of UTF-8, cut after its last whole
 // word (a ghost that ends mid-word gets finished wrong), or between
@@ -92,8 +92,11 @@ export function build(text, count, { weigh = null } = {}) {
         entry.last = at
     }
     const all = new Uint8Array(count * RECORD)
-    const records = Array.from({ length: count }, (_, i) => all.subarray(i * RECORD, (i + 1) * RECORD))
-    for (const [record, shelf] of shelves) pack(records[record], [...shelf.values()])
+    const records = Array.from({ length: count }, (_, i) =>
+        all.subarray(i * RECORD, (i + 1) * RECORD)
+    )
+    for (const [record, shelf] of shelves)
+        write(records[record], place(best([...shelf.values()])))
     return records
 }
 
@@ -106,14 +109,20 @@ function entryAt(text, match, at, count) {
     const end = text.indexOf('\n', at)
     const span = clip(text.slice(at, end < 0 ? text.length : end))
     const tags = tagsAt(match, at)
-    return { record: hash(match.slice(at - KEY, at), KEY_SEED) % count, tags, span, id: `${tags.join(',')} ${span.join(',')}` }
+    return {
+        record: hash(match.slice(at - KEY, at), KEY_SEED) % count,
+        tags,
+        span,
+        id: `${tags.join(',')} ${span.join(',')}`
+    }
 }
 
 // The entry kept for `found` on its record's shelf, made if new.
 function shelve(shelves, found) {
     if (!shelves.has(found.record)) shelves.set(found.record, new Map())
     const shelf = shelves.get(found.record)
-    if (!shelf.has(found.id)) shelf.set(found.id, { ...found, score: 0, last: 0 })
+    if (!shelf.has(found.id))
+        shelf.set(found.id, { ...found, score: 0, last: 0 })
     return shelf.get(found.id)
 }
 
@@ -135,15 +144,10 @@ export function createShelves(count) {
 
     // A room's text before its next line, as far back as a context reaches.
     function tailOf(lines) {
-        const kept = []
-        let length = 0
-        let i = lines.length - 1
-        for (; i >= 0 && length < TAGS.at(-1); i--) {
-            kept.unshift(lines[i].text)
-            length += lines[i].text.length + 1
-        }
-        const tail = `${i < 0 ? '\n' : ''}${kept.join('\n')}${lines.length ? '\n' : ''}`
-        return tail.length > TAGS.at(-1) ? tail.slice(-TAGS.at(-1)) : tail
+        let tail = ''
+        for (let i = lines.length - 1; i >= 0 && tail.length < TAGS.at(-1); i--)
+            tail = `${lines[i].text}\n${tail}`
+        return `\n${tail}`.slice(-TAGS.at(-1))
     }
 
     function add(room, text, weight) {
@@ -153,7 +157,11 @@ export function createShelves(count) {
         const whole = `${tail}${text}\n`
         const match = folded(whole)
         const made = []
-        for (let at = Math.max(KEY, tail.length); at < tail.length + text.length; at++) {
+        for (
+            let at = Math.max(KEY, tail.length);
+            at < tail.length + text.length;
+            at++
+        ) {
             if (!isStart(match, at)) continue
             const entry = shelve(shelves, entryAt(whole, match, at, count))
             entry.score += weight
@@ -172,7 +180,8 @@ export function createShelves(count) {
             entry.score -= weight
             const shelf = shelves.get(entry.record)
             // An entry gone and made again since is another object.
-            if (entry.score <= 1e-9 && shelf?.get(entry.id) === entry) shelf.delete(entry.id)
+            if (entry.score <= 1e-9 && shelf?.get(entry.id) === entry)
+                shelf.delete(entry.id)
             changed.add(entry.record)
         }
         if (!lines.length) rooms.delete(room)
@@ -182,15 +191,22 @@ export function createShelves(count) {
     // them (lines leave a room's front, and come at its end). `weigh(line)`:
     // what a new line counts for (1).
     function sync(library, weigh = () => 1) {
-        for (const room of [...rooms.keys()]) if (!Object.hasOwn(library, room)) while (rooms.has(room)) drop(room)
+        for (const room of [...rooms.keys()])
+            if (!Object.hasOwn(library, room))
+                while (rooms.has(room)) drop(room)
         for (const [room, texts] of Object.entries(library)) {
             const have = (rooms.get(room) ?? []).map((line) => line.text)
             // The lines dropped from the front: the fewest after which what
             // was kept is how the room now starts (all, if nothing fits).
             let dropped = 0
-            while (dropped < have.length && !have.slice(dropped).every((text, i) => texts[i] === text)) dropped++
+            while (
+                dropped < have.length &&
+                !have.slice(dropped).every((text, i) => texts[i] === text)
+            )
+                dropped++
             for (let i = 0; i < dropped; i++) drop(room)
-            for (const text of texts.slice(have.length - dropped)) add(room, text, weigh(text))
+            for (const text of texts.slice(have.length - dropped))
+                add(room, text, weigh(text))
         }
         const out = changed
         changed = new Set()
@@ -200,66 +216,92 @@ export function createShelves(count) {
     // A record as it now stands: its kept entries stay in their slots.
     const layouts = new Map() // record -> entry ids by slot
     function record(index) {
-        const out = new Uint8Array(RECORD)
-        const shelf = shelves.get(index)
-        const kept = shelf ? best([...shelf.values()]) : []
-        const slots = place(kept, layouts.get(index))
-        if (kept.length) layouts.set(index, slots)
+        const slots = place(
+            best([...(shelves.get(index)?.values() ?? [])]),
+            layouts.get(index)
+        )
+        if (slots.some(Boolean))
+            layouts.set(
+                index,
+                slots.map((entry) => entry?.id)
+            )
         else layouts.delete(index)
-        write(out, slots, new Map(kept.map((entry) => [entry.id, entry])))
-        return out
+        return write(new Uint8Array(RECORD), slots)
     }
 
-    return { sync, record, records: () => Array.from({ length: count }, (_, i) => record(i)) }
+    return {
+        sync,
+        record,
+        records: () => Array.from({ length: count }, (_, i) => record(i))
+    }
 }
 
 // The SLOTS entries a record keeps, best first.
 function best(entries) {
     const repeated = new Map() // key tag and continuation -> score over all its entries
     const of = ({ tags, span }) => `${tags[0]} ${span.join(',')}`
-    for (const entry of entries) repeated.set(of(entry), (repeated.get(of(entry)) || 0) + entry.score)
-    return [...entries].sort((a, b) => repeated.get(of(b)) - repeated.get(of(a)) || b.score - a.score || b.last - a.last).slice(0, SLOTS)
+    for (const entry of entries)
+        repeated.set(of(entry), (repeated.get(of(entry)) || 0) + entry.score)
+    return [...entries]
+        .sort(
+            (a, b) =>
+                repeated.get(of(b)) - repeated.get(of(a)) ||
+                b.score - a.score ||
+                b.last - a.last
+        )
+        .slice(0, SLOTS)
 }
 
-// Where each kept entry goes: the slot it had, if it had one, else a free
-// slot, best first. `had`: entry ids by slot (none: a new record).
+// The kept entries by slot: each in the slot it had, if it had one, else
+// a free slot, best first. `had`: entry ids by slot (none: a new record).
 function place(kept, had = []) {
-    const ids = new Set(kept.map((entry) => entry.id))
-    const slots = Array.from({ length: SLOTS }, (_, i) => (ids.has(had[i]) ? had[i] : null))
+    const byId = new Map(kept.map((entry) => [entry.id, entry]))
+    const slots = Array.from(
+        { length: SLOTS },
+        (_, i) => byId.get(had[i]) ?? null
+    )
     const placed = new Set(slots)
-    for (const entry of kept) if (!placed.has(entry.id)) slots[slots.indexOf(null)] = entry.id
+    for (const entry of kept)
+        if (!placed.has(entry)) slots[slots.indexOf(null)] = entry
     return slots
 }
 
-function write(out, slots, byId) {
+function write(out, slots) {
     const view = new DataView(out.buffer, out.byteOffset, out.byteLength)
-    slots.forEach((id, i) => {
-        const entry = id && byId.get(id)
+    slots.forEach((entry, i) => {
         if (!entry) return
         const at = i * SLOT
         entry.tags.forEach((t, k) => view.setUint16(at + 2 * k, t, true))
-        out[at + 2 * entry.tags.length] = Math.min(255, Math.max(1, Math.round(entry.score)))
-        out[at + 2 * entry.tags.length + 1] = entry.span.length
+        out[at + COUNT_AT] = Math.min(255, Math.max(1, Math.round(entry.score)))
+        out[at + COUNT_AT + 1] = entry.span.length
         out.set(entry.span, at + HEADER)
     })
-}
-
-function pack(out, entries) {
-    const kept = best(entries)
-    write(out, place(kept), new Map(kept.map((entry) => [entry.id, entry])))
+    return out
 }
 
 // The entries of a record: { tags, count, text }.
 const decoder = new TextDecoder()
 export function entries(record) {
-    const view = new DataView(record.buffer, record.byteOffset, record.byteLength)
+    const view = new DataView(
+        record.buffer,
+        record.byteOffset,
+        record.byteLength
+    )
     const out = []
     for (let at = 0; at + SLOT <= record.length; at += SLOT) {
-        const count = record[at + 2 * (1 + TAGS.length)]
-        const length = record[at + 2 * (1 + TAGS.length) + 1]
+        const count = record[at + COUNT_AT]
+        const length = record[at + COUNT_AT + 1]
         if (!count || length > SPAN) continue
-        const tags = Array.from({ length: 1 + TAGS.length }, (_, i) => view.getUint16(at + 2 * i, true))
-        out.push({ tags, count, text: decoder.decode(record.subarray(at + HEADER, at + HEADER + length)) })
+        const tags = Array.from({ length: 1 + TAGS.length }, (_, i) =>
+            view.getUint16(at + 2 * i, true)
+        )
+        out.push({
+            tags,
+            count,
+            text: decoder.decode(
+                record.subarray(at + HEADER, at + HEADER + length)
+            )
+        })
     }
     return out
 }
@@ -275,7 +317,11 @@ export function question(context) {
     let start = match.length
     while (start > 0 && !isSpace(match[start - 1])) start--
     if (start < KEY) return null
-    return { hash: hash(match.slice(start - KEY, start), KEY_SEED), tags: tagsAt(match, start), partial: context.slice(start) }
+    return {
+        hash: hash(match.slice(start - KEY, start), KEY_SEED),
+        tags: tagsAt(match, start),
+        partial: context.slice(start)
+    }
 }
 
 // The record a question picks at a peer whose table holds `count`. Its
@@ -292,13 +338,29 @@ export function match(record, asked) {
     for (const entry of entries(record)) {
         if (entry.tags[0] !== asked.tags[0]) continue
         let length = KEY
-        for (let i = 0; i < TAGS.length && asked.tags[i + 1] && entry.tags[i + 1] === asked.tags[i + 1]; i++) length = TAGS[i]
+        for (
+            let i = 0;
+            i < TAGS.length &&
+            asked.tags[i + 1] &&
+            entry.tags[i + 1] === asked.tags[i + 1];
+            i++
+        )
+            length = TAGS[i]
         if (!folded(entry.text).startsWith(typed)) continue
-        found.push({ length, text: entry.text.slice(typed.length), count: entry.count })
+        found.push({
+            length,
+            text: entry.text.slice(typed.length),
+            count: entry.count
+        })
     }
     if (!found.length) return { L: 0, spans: [] }
     const longest = Math.max(...found.map((f) => f.length))
     const spans = new Map()
-    for (const { length, text, count } of found) if (text && length >= longest * NEAR) spans.set(text, (spans.get(text) || 0) + count)
-    return { L: Math.min(64, longest + typed.length), spans: [...spans].sort((a, b) => b[1] - a[1]) }
+    for (const { length, text, count } of found)
+        if (text && length >= longest * NEAR)
+            spans.set(text, (spans.get(text) || 0) + count)
+    return {
+        L: Math.min(64, longest + typed.length),
+        spans: [...spans].sort((a, b) => b[1] - a[1])
+    }
 }

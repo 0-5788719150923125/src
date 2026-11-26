@@ -22,10 +22,17 @@ const FUNCTIONS = { '/api/turn': 'functions/api/turn.js' }
 
 // A Pages Function's GET handler, called with a Request and the environment.
 async function runFunction(file, req, res) {
-    const { onRequestGet } = await import(pathToFileURL(path.join(ROOT, file)).href)
-    const request = new Request(new URL(req.url, `http://${req.headers.host}`), { headers: req.headers })
+    const { onRequestGet } = await import(
+        pathToFileURL(path.join(ROOT, file)).href
+    )
+    const request = new Request(
+        new URL(req.url, `http://${req.headers.host}`),
+        { headers: req.headers }
+    )
     const response = await onRequestGet({ request, env: process.env })
-    res.writeHead(response.status, Object.fromEntries(response.headers)).end(Buffer.from(await response.arrayBuffer()))
+    res.writeHead(response.status, Object.fromEntries(response.headers)).end(
+        Buffer.from(await response.arrayBuffer())
+    )
 }
 
 const TYPES = {
@@ -47,11 +54,10 @@ const TYPES = {
 const LIVE_SCRIPT = `(async () => {
   let seen = null
   for (;;) {
-    try {
-      const version = await (await fetch('/__live__', { cache: 'no-store' })).text()
-      if (seen !== null && version !== seen) location.reload()
-      seen = version
-    } catch {}
+    // No answer while the server restarts: ask again in a second.
+    const version = await fetch('/__live__', { cache: 'no-store' }).then((r) => r.text(), () => null)
+    if (version !== null && seen !== null && version !== seen) location.reload()
+    if (version !== null) seen = version
     await new Promise((r) => setTimeout(r, 1000))
   }
 })()
@@ -70,7 +76,11 @@ export function headersFor(out, pathname) {
     for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
         if (!line.trim() || line.trim().startsWith('#')) continue
         if (!/^\s/.test(line)) {
-            const pattern = line.trim().replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/:\w+/g, '[^/]+')
+            const pattern = line
+                .trim()
+                .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+                .replace(/\*/g, '.*')
+                .replace(/:\w+/g, '[^/]+')
             matches = new RegExp(`^${pattern}$`).test(pathname)
         } else if (matches && line.includes(':')) {
             const at = line.indexOf(':')
@@ -86,51 +96,79 @@ export function serve(out, { host = '127.0.0.1', port = 8000 } = {}) {
 
     async function maybeRebuild() {
         try {
-            if (!fs.existsSync(index) || newestInput() > fs.statSync(index).mtimeMs) {
-                building = building || build(out).finally(() => (building = null))
+            if (
+                !fs.existsSync(index) ||
+                newestInput() > fs.statSync(index).mtimeMs
+            ) {
+                building =
+                    building || build(out).finally(() => (building = null))
                 await building
             }
         } catch (err) {
-            console.log(`[serve] rebuild failed, serving last good build: ${err.message}`)
+            console.log(
+                `[serve] rebuild failed, serving last good build: ${err.message}`
+            )
         }
     }
 
-    const send = (res, status, body, type) =>
-        res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-cache' }).end(body)
+    const head = (res, status, type) =>
+        res.writeHead(status, {
+            'Content-Type': type,
+            'Cache-Control': 'no-cache'
+        })
+    const send = (res, status, body, type = 'text/plain') =>
+        head(res, status, type).end(body)
 
     const server = http.createServer(async (req, res) => {
         await maybeRebuild()
         const { pathname } = new URL(req.url, 'http://localhost')
-        for (const [name, value] of headersFor(out, pathname)) res.setHeader(name, value)
-        if (pathname === '/__live__') return send(res, 200, String(fs.statSync(index).mtimeMs), 'text/plain')
-        if (pathname === '/__live__.js') return send(res, 200, LIVE_SCRIPT, TYPES['.js'])
+        for (const [name, value] of headersFor(out, pathname))
+            res.setHeader(name, value)
+        if (pathname === '/__live__')
+            return send(res, 200, String(fs.statSync(index).mtimeMs))
+        if (pathname === '/__live__.js')
+            return send(res, 200, LIVE_SCRIPT, TYPES['.js'])
         if (FUNCTIONS[pathname]) {
-            if (req.method !== 'GET') return send(res, 405, 'method not allowed', 'text/plain')
-            return runFunction(FUNCTIONS[pathname], req, res).catch((err) => send(res, 500, err.message, 'text/plain'))
+            if (req.method !== 'GET')
+                return send(res, 405, 'method not allowed')
+            return runFunction(FUNCTIONS[pathname], req, res).catch((err) =>
+                send(res, 500, err.message)
+            )
         }
         if (pathname === '/' || pathname === '/index.html') {
-            const html = fs.readFileSync(index, 'utf8').replace('</body>', `${LIVE_TAG}\n</body>`)
+            const html = fs
+                .readFileSync(index, 'utf8')
+                .replace('</body>', `${LIVE_TAG}\n</body>`)
             return send(res, 200, html, TYPES['.html'])
         }
         let file
         try {
             file = path.join(out, decodeURIComponent(pathname))
         } catch {
-            return send(res, 400, 'bad request', 'text/plain')
+            return send(res, 400, 'bad request')
         }
-        if (!file.startsWith(out + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        if (
+            !file.startsWith(out + path.sep) ||
+            !fs.existsSync(file) ||
+            !fs.statSync(file).isFile()
+        ) {
             console.log(`[serve] 404 ${pathname}`)
-            return send(res, 404, 'not found', 'text/plain')
+            return send(res, 404, 'not found')
         }
-        res.writeHead(200, {
-            'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
-            'Cache-Control': 'no-cache'
-        })
-        fs.createReadStream(file).pipe(res)
+        fs.createReadStream(file).pipe(
+            head(
+                res,
+                200,
+                TYPES[path.extname(file).toLowerCase()] ||
+                    'application/octet-stream'
+            )
+        )
     })
 
     server.listen(port, host, () =>
-        console.log(`[serve] http://localhost:${port} (rebuilds on refresh; ctrl-c to stop)`)
+        console.log(
+            `[serve] http://localhost:${port} (rebuilds on refresh; ctrl-c to stop)`
+        )
     )
     return server
 }

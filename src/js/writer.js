@@ -41,7 +41,9 @@ export const whenReady = new Promise((resolve) => (markReady = resolve))
 export function guess(line, onGhost) {
     const id = ++next
     current = { id, onGhost }
-    ask(id, 0, line, (memory, done) => worker.postMessage({ command: 'guess', id, line, memory, done }))
+    ask(id, 0, line, (memory, done) =>
+        worker.postMessage({ command: 'guess', id, line, memory, done })
+    )
     return id
 }
 
@@ -82,10 +84,15 @@ let watchdog = null
 // How the worker is made. The browser extension's terminal uses the one its
 // background runs for the whole browser instead (extension/terminal.js),
 // which speaks the same messages.
-let makeWorker = () => new Worker(new URL('./writer.worker.js', import.meta.url), { type: 'module' })
+let makeWorker = () =>
+    new Worker(new URL('./writer.worker.js', import.meta.url), {
+        type: 'module'
+    })
 export const useWorker = (make) => (makeWorker = make)
 
-export function load() {
+// `welcome`: the text entry said once the model can guess (the browser
+// extension has its own).
+export function load(welcome = null) {
     if (worker) return
     // Shown at once: the worker and its library take a moment to start
     // before they can say how the download is going.
@@ -94,7 +101,10 @@ export function load() {
     // Said once the model can guess, not before: until then the ticker
     // shows the download. A touchscreen has no Tab key; there, the ghost is
     // taken by a tap.
-    whenReady.then(() => say(matchMedia('(pointer: coarse)').matches ? t('pen.info-touch') : t('pen.info')))
+    const touch = matchMedia('(pointer: coarse)').matches
+    whenReady.then(() =>
+        say(welcome ? t(welcome) : touch ? t('pen.info-touch') : t('pen.info'))
+    )
 }
 
 function start(threads = 0) {
@@ -103,14 +113,18 @@ function start(threads = 0) {
         if (data.starting && !threads) {
             clearTimeout(watchdog)
             watchdog = setTimeout(() => {
-                console.warn('writer: the model did not start; trying again on one thread')
+                console.warn(
+                    'writer: the model did not start; trying again on one thread'
+                )
                 worker.terminate()
                 start(1)
             }, START_LIMIT)
         }
-        if (data.ghost && data.ghost.id === current?.id) current.onGhost(data.ghost)
+        if (data.ghost && data.ghost.id === current?.id)
+            current.onGhost(data.ghost)
         // The guess has outrun what the room remembered: ask again.
-        if (data.more && data.more.id === current?.id) ask(data.more.id, data.more.seq, data.more.line)
+        if (data.more && data.more.id === current?.id)
+            ask(data.more.id, data.more.seq, data.more.line)
         if (data.ready) {
             clearTimeout(watchdog)
             ready = true
@@ -124,5 +138,9 @@ function start(threads = 0) {
     }
     // The worker gets its words from here: what PEN reads before the
     // conversation.
-    worker.postMessage({ command: 'load', text: { preamble: t('pen.preamble'), threads }, lines })
+    worker.postMessage({
+        command: 'load',
+        text: { preamble: t('pen.preamble'), threads },
+        lines
+    })
 }

@@ -21,17 +21,25 @@ import { ROOT } from './build.js'
 
 const dist = path.join(ROOT, 'node_modules', 'webtorrent', 'dist')
 if (!fs.existsSync(dist)) {
-    console.error('[vendor] node_modules/webtorrent is missing; run `npm install` first.')
+    console.error(
+        '[vendor] node_modules/webtorrent is missing; run `npm install` first.'
+    )
     process.exit(1)
 }
 
-const { version } = JSON.parse(fs.readFileSync(path.join(dist, '..', 'package.json'), 'utf8'))
+const { version } = JSON.parse(
+    fs.readFileSync(path.join(dist, '..', 'package.json'), 'utf8')
+)
 const copies = [
     ['webtorrent.min.js', 'src/vendor/webtorrent.min.js'],
     ['sw.min.js', 'src/vendor/webtorrent-sw.js']
 ]
 for (const [from, to] of copies) {
-    const text = fs.readFileSync(path.join(dist, from), 'utf8').replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n')
+    const text = fs
+        .readFileSync(path.join(dist, from), 'utf8')
+        .replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n')
     fs.writeFileSync(path.join(ROOT, to), text)
-    console.log(`[vendor] ${to} from webtorrent ${version} (${fs.statSync(path.join(ROOT, to)).size} bytes)`)
+    console.log(
+        `[vendor] ${to} from webtorrent ${version} (${fs.statSync(path.join(ROOT, to)).size} bytes)`
+    )
 }

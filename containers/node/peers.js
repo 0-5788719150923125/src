@@ -49,18 +49,33 @@ import fs from 'node:fs'
 import path from 'node:path'
 import WebTorrent from 'webtorrent'
 import { keysFor } from '../../src/js/crypto.js'
-import { combine, index, lookup, memoryExtension, sendMemory } from '../../src/js/memory.js'
-import { createAnswerer, privateExtension, swarmFile } from '../../src/js/private.js'
+import {
+    combine,
+    index,
+    lookup,
+    memoryExtension,
+    sendMemory
+} from '../../src/js/memory.js'
+import {
+    createAnswerer,
+    privateExtension,
+    swarmFile
+} from '../../src/js/private.js'
 import { roomFile } from '../../src/js/room.js'
 import { describePorts, webrtc } from './webrtc.js'
 
 // Many clients in one process share sockets; the default warns at ten.
 EventEmitter.defaultMaxListeners = 100
 
-
-const list = (value) => (value || '').split(',').map((s) => s.trim()).filter(Boolean)
+const list = (value) =>
+    (value || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
 const DATA = process.env.PEER_DATA || 'tinystories'
-const CHATS = list(process.env.PEER_CHATS || 'memorytest').map((name) => name.toLowerCase())
+const CHATS = list(process.env.PEER_CHATS || 'memorytest').map((name) =>
+    name.toLowerCase()
+)
 const WEIGHT = Math.min(1, Math.max(0, Number(process.env.PEER_WEIGHT ?? 1)))
 const PER_PEER = (Number(process.env.PEER_MB) || 2) * 1e6
 const MAX_SLICES = 16
@@ -71,7 +86,10 @@ const DROP = Number(process.env.PEER_DROP) || 0
 const DELAY = Number(process.env.PEER_DELAY) || 0
 const DATA_DIR = process.env.DATA_DIR || './data'
 const PRIVATE = process.env.PEER_PRIVATE !== '0'
-const PRIVATE_GROUPS = Math.max(1, Number(process.env.PEER_PRIVATE_GROUPS) || (DATA === 'git' ? 4 : 1))
+const PRIVATE_GROUPS = Math.max(
+    1,
+    Number(process.env.PEER_PRIVATE_GROUPS) || (DATA === 'git' ? 4 : 1)
+)
 const KEY = process.env.PEER_KEY || ''
 const log = (...args) => console.log(new Date().toISOString(), ...args)
 
@@ -90,20 +108,36 @@ const plain = (text) =>
 // Project Gutenberg: the book between its markers, hard-wrapped lines joined
 // back into paragraphs.
 const gutenberg = (text) => {
-    const body = text.split(/\*\*\* ?START OF[^\n]*\n/)[1]?.split(/\*\*\* ?END OF/)[0] ?? text
-    return body.split(/\r?\n\s*\r?\n/).map((p) => p.replace(/\s*\r?\n\s*/g, ' ').trim()).filter(Boolean).join('\n')
+    const body =
+        text.split(/\*\*\* ?START OF[^\n]*\n/)[1]?.split(/\*\*\* ?END OF/)[0] ??
+        text
+    return body
+        .split(/\r?\n\s*\r?\n/)
+        .map((p) => p.replace(/\s*\r?\n\s*/g, ' ').trim())
+        .filter(Boolean)
+        .join('\n')
 }
 
 const SOURCES = {
     tinystories: {
-        urls: ['https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt'],
+        urls: [
+            'https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt'
+        ],
         file: 'tinystories.txt',
-        shape: (text) => text.split('<|endoftext|>').map((s) => s.trim()).filter(Boolean).join('\n')
+        shape: (text) =>
+            text
+                .split('<|endoftext|>')
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .join('\n')
     },
     quijote: {
         // Gutenberg's own site turns some clients away (503); its mirror
         // does not.
-        urls: ['https://gutenberg.pglaf.org/2/0/0/2000/2000-0.txt', 'https://www.gutenberg.org/cache/epub/2000/pg2000.txt'],
+        urls: [
+            'https://gutenberg.pglaf.org/2/0/0/2000/2000-0.txt',
+            'https://www.gutenberg.org/cache/epub/2000/pg2000.txt'
+        ],
         file: 'quijote.txt',
         shape: gutenberg
     }
@@ -112,7 +146,13 @@ const SOURCES = {
 async function library() {
     if (DATA === 'git') {
         const { parseSources, readSources } = await import('./sources.js')
-        return plain(await readSources(parseSources(process.env.PEER_SOURCES), path.join(DATA_DIR, 'sources'), log))
+        return plain(
+            await readSources(
+                parseSources(process.env.PEER_SOURCES),
+                path.join(DATA_DIR, 'sources'),
+                log
+            )
+        )
     }
     const source = SOURCES[DATA]
     if (!source) return plain(fs.readFileSync(DATA, 'utf8'))
@@ -121,7 +161,10 @@ async function library() {
         let body = null
         for (const url of source.urls) {
             log(`downloading ${DATA} from ${url}`)
-            const response = await fetch(url).catch((err) => ({ ok: false, status: err.message }))
+            const response = await fetch(url).catch((err) => ({
+                ok: false,
+                status: err.message
+            }))
             if (response.ok) {
                 body = await response.text()
                 break
@@ -137,18 +180,31 @@ async function library() {
 
 // How many peers: PEERS, else one for git (so a visitor connects to a
 // server once), and eight test peers, each its own voter.
-const PEER_COUNT = Number(process.env.PEERS) > 0 ? Number(process.env.PEERS) : DATA === 'git' ? 1 : 8
+const PEER_COUNT =
+    Number(process.env.PEERS) > 0
+        ? Number(process.env.PEERS)
+        : DATA === 'git'
+          ? 1
+          : 8
 
 // How many slices: one per test peer; for git, enough to hold the text.
 const sliceCount = (text) =>
-    DATA === 'git' ? Math.min(MAX_SLICES, Math.max(PEER_COUNT, Math.ceil(text.length / PER_PEER))) : PEER_COUNT
+    DATA === 'git'
+        ? Math.min(
+              MAX_SLICES,
+              Math.max(PEER_COUNT, Math.ceil(text.length / PER_PEER))
+          )
+        : PEER_COUNT
 
 // Contiguous slices, cut at line ends. Text past what the slices can hold
 // is left out, and said so.
 function slices(text) {
     const count = sliceCount(text)
     const size = Math.min(PER_PEER, Math.ceil(text.length / count))
-    if (size * count < text.length) log(`only ${((size * count) / 1e6).toFixed(1)}M of ${(text.length / 1e6).toFixed(1)}M characters fit in ${count} slices (PEERS, PEER_MB)`)
+    if (size * count < text.length)
+        log(
+            `only ${((size * count) / 1e6).toFixed(1)}M of ${(text.length / 1e6).toFixed(1)}M characters fit in ${count} slices (PEERS, PEER_MB)`
+        )
     const out = []
     let at = 0
     while (out.length < count && at < text.length) {
@@ -162,7 +218,10 @@ function slices(text) {
 }
 
 // The slices each peer holds: every PEER_COUNT-th, from its own number.
-const deal = (parts) => Array.from({ length: PEER_COUNT }, (_, n) => parts.filter((_, i) => i % PEER_COUNT === n))
+const deal = (parts) =>
+    Array.from({ length: PEER_COUNT }, (_, n) =>
+        parts.filter((_, i) => i % PEER_COUNT === n)
+    )
 
 // A peer's slices, each indexed on its own; none: it holds nothing. The
 // private table holds them all, as one text, in the background (its hint
@@ -172,36 +231,76 @@ function remember(peer, texts) {
     peer.memories = texts.map((text) => index(text))
     peer.chars = texts.reduce((sum, text) => sum + text.length, 0)
     if (texts.length) {
-        log(`peer ${peer.n}: ${(peer.chars / 1e6).toFixed(2)}M characters in ${texts.length} slice${texts.length > 1 ? 's' : ''}, indexed in ${Math.round(performance.now() - t)} ms`)
+        log(
+            `peer ${peer.n}: ${(peer.chars / 1e6).toFixed(2)}M characters in ${texts.length} slice${texts.length > 1 ? 's' : ''}, indexed in ${Math.round(performance.now() - t)} ms`
+        )
     }
     if (!peer.answerer || !texts.length) return
     const p = performance.now()
     peer.answerer
         .load(texts.join('\n'))
-        .then(({ version, changes }) => log(`peer ${peer.n}: private table version ${version} (${PRIVATE_GROUPS} groups${version > 1 ? `, ${changes} elements changed` : ''}) in ${Math.round(performance.now() - p)} ms`))
-        .catch((err) => log(`peer ${peer.n}: private table failed: ${err.message || err}`))
+        .then(({ version, changes }) =>
+            log(
+                `peer ${peer.n}: private table version ${version} (${PRIVATE_GROUPS} groups${version > 1 ? `, ${changes} elements changed` : ''}) in ${Math.round(performance.now() - p)} ms`
+            )
+        )
+        .catch((err) =>
+            log(`peer ${peer.n}: private table failed: ${err.message || err}`)
+        )
 }
 
 // What a peer remembers of how `context` goes on: every slice's lookup,
 // combined as one answer (combine, in memory.js: the slices whose match is
 // near the longest vote, so a line two slices hold counts once), or none.
-const recollect = (peer, context) => combine(peer.memories.map((memory) => ({ ...lookup(memory, context), w: 1 })))
+const recollect = (peer, context) =>
+    combine(
+        peer.memories.map((memory) => ({ ...lookup(memory, context), w: 1 }))
+    )
 
 function startPeer(n, texts, rtcConfig) {
-    const peer = { n, memories: [], chars: 0, wires: 0, asked: 0, matched: 0, answerer: null }
+    const peer = {
+        n,
+        memories: [],
+        chars: 0,
+        wires: 0,
+        asked: 0,
+        matched: 0,
+        answerer: null
+    }
     const secret = KEY && (PEER_COUNT > 1 ? `${KEY}:${n}` : KEY)
-    if (PRIVATE) peer.answerer = createAnswerer({ groups: PRIVATE_GROUPS, secret: secret || null })
-    if (secret) keysFor(secret).then(({ pub }) => log(`peer ${n}: private key ${pub} (for SRC_PINNED_KEYS)`))
+    if (PRIVATE)
+        peer.answerer = createAnswerer({
+            groups: PRIVATE_GROUPS,
+            secret: secret || null
+        })
+    if (secret)
+        keysFor(secret).then(({ pub }) =>
+            log(`peer ${n}: private key ${pub} (for SRC_PINNED_KEYS)`)
+        )
     remember(peer, texts)
-    const client = new WebTorrent({ dht: false, lsd: false, utp: false, natUpnp: false, natPmp: false, tracker: { rtcConfig } })
+    const client = new WebTorrent({
+        dht: false,
+        lsd: false,
+        utp: false,
+        natUpnp: false,
+        natPmp: false,
+        tracker: { rtcConfig }
+    })
     client.on('error', (err) => log(`peer ${n}: ${err.message || err}`))
     const Memory = memoryExtension((message, wire) => {
-        if (typeof message.q !== 'number' || typeof message.c !== 'string') return
+        if (typeof message.q !== 'number' || typeof message.c !== 'string')
+            return
         const answer = recollect(peer, message.c) ?? { L: 0, spans: [] }
         peer.asked++
         if (answer.spans.length) peer.matched++
         if (Math.random() < DROP) return
-        const send = () => sendMemory(wire, { a: message.q, L: answer.L, s: answer.spans, w: WEIGHT })
+        const send = () =>
+            sendMemory(wire, {
+                a: message.q,
+                L: answer.L,
+                s: answer.spans,
+                w: WEIGHT
+            })
         if (DELAY) setTimeout(send, Math.random() * DELAY)
         else send()
     })
@@ -215,7 +314,9 @@ function startPeer(n, texts, rtcConfig) {
     }
     if (peer.answerer) {
         const Private = privateExtension(peer.answerer.handle)
-        client.seed(swarmFile(), { announce: TRACKERS }).on('wire', (wire) => wire.use(Private))
+        client
+            .seed(swarmFile(), { announce: TRACKERS })
+            .on('wire', (wire) => wire.use(Private))
     }
     return peer
 }
@@ -227,27 +328,42 @@ log(`webrtc: ${describePorts(portRange, connections)}`)
 
 const beat = () => fs.writeFileSync(HEARTBEAT, String(Date.now()))
 let text = await library()
-if (!text) log(DATA === 'git' ? 'PEER_SOURCES gave no text; nothing to remember (set it, or check the sources above)' : `${DATA} is empty`)
+if (!text)
+    log(
+        DATA === 'git'
+            ? 'PEER_SOURCES gave no text; nothing to remember (set it, or check the sources above)'
+            : `${DATA} is empty`
+    )
 const peers = deal(slices(text)).map((held, n) => startPeer(n, held, rtcConfig))
-log(`${peers.length} peer${peers.length > 1 ? 's' : ''} remember${peers.length > 1 ? '' : 's'} ${DATA} in ${CHATS.map((c) => `"${c}"`).join(', ')} (open ?chat=${CHATS[0]}), counting ${WEIGHT}; trackers: ${TRACKERS.join(', ') || 'none'}`)
+log(
+    `${peers.length} peer${peers.length > 1 ? 's' : ''} remember${peers.length > 1 ? '' : 's'} ${DATA} in ${CHATS.map((c) => `"${c}"`).join(', ')} (open ?chat=${CHATS[0]}), counting ${WEIGHT}; trackers: ${TRACKERS.join(', ') || 'none'}`
+)
 beat()
 setInterval(() => {
     beat()
     const total = (key) => peers.reduce((sum, p) => sum + p[key], 0)
-    const answered = (key) => peers.reduce((sum, p) => sum + (p.answerer?.stats[key] ?? 0), 0)
-    log(`connections ${total('wires')}, questions ${total('asked')}, answered with a match ${total('matched')}${PRIVATE ? `; private: hints sent ${answered('hints')}, questions ${answered('questions')}` : ''}`)
+    const answered = (key) =>
+        peers.reduce((sum, p) => sum + (p.answerer?.stats[key] ?? 0), 0)
+    log(
+        `connections ${total('wires')}, questions ${total('asked')}, answered with a match ${total('matched')}${PRIVATE ? `; private: hints sent ${answered('hints')}, questions ${answered('questions')}` : ''}`
+    )
 }, 30000).unref?.()
 
 // The sources change; read them again, and re-index the peers in place.
 if (DATA === 'git' && REFRESH) {
     setInterval(async () => {
-        const fresh = await library().catch((err) => (log(`refresh failed: ${err.message || err}`), null))
+        const fresh = await library().catch(
+            (err) => (log(`refresh failed: ${err.message || err}`), null)
+        )
         if (fresh === null || fresh === text) return
         text = fresh
         const parts = slices(text)
         deal(parts).forEach((held, n) => remember(peers[n], held))
-        log(`refreshed: ${(text.length / 1e6).toFixed(2)}M characters in ${parts.length} slices, ${peers.length} peer${peers.length > 1 ? 's' : ''}`)
+        log(
+            `refreshed: ${(text.length / 1e6).toFixed(2)}M characters in ${parts.length} slices, ${peers.length} peer${peers.length > 1 ? 's' : ''}`
+        )
     }, REFRESH)
 }
 
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0))
+for (const signal of ['SIGINT', 'SIGTERM'])
+    process.on(signal, () => process.exit(0))
