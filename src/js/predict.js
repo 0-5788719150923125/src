@@ -29,6 +29,23 @@ export function ahead({ base, written }, line) {
         : null
 }
 
+// A guess keeps a lead: once it is done and shows less than LEAD
+// characters, the next is asked from its end and shown after it, so it is
+// there before the visitor gets to the end. The model still ends each
+// guess where it likes (a line's or the text's end, often right after a
+// sentence, or past about 120 characters); the next used to be asked only
+// once the last was taken whole, and nothing showed meanwhile (the user,
+// 2026-11-26). `from` is how much of `written` came from earlier guesses:
+// one that added nothing ends the chain.
+export const LEAD = 40
+export const goOn = (guess, rest) =>
+    Boolean(
+        guess?.done &&
+        guess.written.length > guess.from &&
+        rest !== null &&
+        rest.length < LEAD
+    )
+
 // Whether a token agrees with the unfinished text it must begin with.
 const agrees = (pending, piece) =>
     piece !== '' && (piece.startsWith(pending) || pending.startsWith(piece))

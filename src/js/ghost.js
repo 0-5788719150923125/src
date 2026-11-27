@@ -13,7 +13,7 @@
 
 import { complete } from './commands.js'
 import * as writer from './writer.js'
-import { ahead } from './predict.js'
+import { ahead, goOn } from './predict.js'
 
 const PAUSE = 150 // ms of quiet before a guess
 // A guess that has shown nothing and not finished after this long is taken
@@ -26,7 +26,7 @@ const view = document.getElementById('ghost')
 const taking = document.getElementById('taking') // what a swipe would keep, drawn as typed
 const typed = document.getElementById('typed')
 
-let current = null // { id, base, written, done }: the line it guessed from, and the guess so far (id 0: a command's suggestion)
+let current = null // { id, base, written, from, done }: the line it guessed from, and the guess so far (id 0: a command's suggestion)
 let line = '' // the line as last seen
 let timer = null
 let watchdog = null
@@ -39,39 +39,44 @@ const atEnd = () =>
     input.selectionEnd === input.value.length
 const shown = () => (current ? ahead(current, input.value) : null)
 
-function ask() {
-    const base = input.value
+// Guess how the line goes on: from the line, or from the end of guess `on`,
+// shown after it (predict.js goOn).
+function ask(on = null) {
+    const base = on?.base ?? input.value
     if (isCommand(base)) {
         const rest = complete(base)
         if (rest) current = { id: 0, base, written: rest, done: true }
         return draw()
     }
     if (!base.trim() || !writer.isReady()) return
-    const id = writer.guess(base, (ghost) => {
+    const written = on?.written ?? ''
+    const id = writer.guess(base + written, (ghost) => {
         if (current?.id !== id) return
         clearTimeout(watchdog)
-        // Corrected by the swarm: written again from the start.
-        if (ghost.reset) Object.assign(current, { written: '', done: false })
+        // Corrected by the swarm: its own part written again.
+        if (ghost.reset)
+            Object.assign(current, {
+                written: current.written.slice(0, current.from),
+                done: false
+            })
         if (ghost.text) current.written += ghost.text
         if (ghost.done) current.done = true
-        // Taken whole before it finished: guess on from the end. (A guess
-        // that wrote nothing ends there.)
-        if (current.done && current.written && shown() === '') changed(true)
+        if (goOn(current, shown())) ask(current)
         draw()
     })
-    current = { id, base, written: '', done: false }
+    current = { id, base, written, from: written.length, done: false }
     clearTimeout(watchdog)
     watchdog = setTimeout(() => {
         if (
             current?.id !== id ||
-            current.written ||
+            current.written.length > current.from ||
             current.done ||
             retries >= RETRIES
         )
             return
         retries++
         drop()
-        ask()
+        ask(on)
     }, STUCK)
 }
 
@@ -89,12 +94,13 @@ function changed(again = false) {
     line = input.value
     const rest = shown()
     // Guess anew once the typing pauses, unless the guess still has
-    // something to show or is still being written.
+    // something to show or is still being written; one running short is
+    // gone on from.
     if (rest === null || (rest === '' && current.done)) {
         drop()
         if (isCommand(line)) ask()
         else timer = setTimeout(ask, PAUSE)
-    }
+    } else if (current.id && goOn(current, rest)) ask(current)
     draw()
 }
 

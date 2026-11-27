@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
     ahead,
+    goOn,
+    LEAD,
     boostFrom,
     common,
     consume,
@@ -204,4 +206,14 @@ test('a draw takes the memory into account', () => {
         big > 450,
         `the memory's token, unlikely to the model, is drawn most (${big}/1000)`
     )
+})
+
+test('a guess running short is gone on from', () => {
+    const guess = { base: 'See you on', written: ' the way home.', from: 0 }
+    assert.equal(goOn({ ...guess, done: false }, ' the way home.'), false) // still writing
+    assert.equal(goOn({ ...guess, done: true }, ' the way home.'), true)
+    assert.equal(goOn({ ...guess, done: true }, ''), true) // taken whole
+    assert.equal(goOn({ ...guess, done: true }, null), false) // gone its own way
+    assert.equal(goOn({ ...guess, done: true }, 'x'.repeat(LEAD)), false) // lead enough
+    assert.equal(goOn({ ...guess, done: true, from: 14 }, ''), false) // added nothing
 })

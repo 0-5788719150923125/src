@@ -26,7 +26,7 @@
 // The build (scripts/extension.js) packs this module and what it imports
 // into one classic script, which is what a content script must be.
 
-import { ahead } from '../src/js/predict.js'
+import { ahead, goOn } from '../src/js/predict.js'
 
 ;(() => {
     const api = globalThis.browser ?? globalThis.chrome
@@ -42,6 +42,12 @@ import { ahead } from '../src/js/predict.js'
     // Held, Tab keeps a word every TAKE_EVERY ms once HOLD ms have passed.
     const HOLD = 220
     const TAKE_EVERY = 25
+    // Tabs in a run go on being taken for this long after the last, or
+    // while a guess is on its way (see onKeyDown).
+    const RUN = 1000
+    // How long a field given room may take to show it before a line break
+    // is written instead (see breakAfter).
+    const ROOM_WAIT = 300
     // Characters before the caret the model reads. The start stays put, so
     // the host's model keeps what it has read cached, until the text passes
     // MOST; then it jumps ahead until about LEAST remain (src/js/predict.js
@@ -234,13 +240,15 @@ import { ahead } from '../src/js/predict.js'
         const ghost = message?.ghost
         if (!ghost || current?.id !== ghost.id) return
         clearTimeout(watchdog)
-        // Corrected by the swarm: written again from the start.
-        if (ghost.reset) Object.assign(current, { written: '', done: false })
+        // Corrected by the swarm: its own part written again.
+        if (ghost.reset)
+            Object.assign(current, {
+                written: current.written.slice(0, current.from),
+                done: false
+            })
         if (ghost.text) current.written += ghost.text
         if (ghost.done) current.done = true
-        // Taken whole before it finished: guess on from the end. (A guess
-        // that wrote nothing ends there.)
-        if (current.done && current.written && shown() === '') changed(true)
+        if (goOn(current, shown())) ask(current)
         draw()
     }
 
@@ -257,8 +265,12 @@ import { ahead } from '../src/js/predict.js'
     // ------------------------------------------------------------ guesses
 
     let field = null // { el, kind }: the field being typed in
-    let current = null // { id, base, written, done, el }
+    let current = null // { id, base, written, from, done, el }
     let last = null // what was before the caret as last seen
+    // Whether the visitor has typed in the field since it took the focus:
+    // until then there is no guess, so a click into a box that holds text
+    // changes nothing (on chatgpt.com it made the line break at once).
+    let typed = false
     let timer = null
     let watchdog = null
     let retries = 0
@@ -288,38 +300,50 @@ import { ahead } from '../src/js/predict.js'
         return from
     }
 
-    function ask() {
+    // Guess how the text goes on: from what is before the caret, or from the
+    // end of guess `on`, shown after it (predict.js goOn).
+    function ask(on = null) {
+        timer = null
         if (!field) return
         const state = caretIn(field)
         if (!state?.atEnd || !wanted(state.before)) return
         wake()
         if (!ready) return
         const id = ++next
-        const { before } = state
+        const base = on?.base ?? state.before
+        const written = on?.written ?? ''
+        const line = base + written
         if (
             !send({
                 guess: {
                     id,
-                    line: before.slice(startOf(field.el, before)),
+                    line: line.slice(startOf(field.el, line)),
                     title: document.title,
                     site
                 }
             })
         )
             return
-        current = { id, base: before, written: '', done: false, el: field.el }
+        current = {
+            id,
+            base,
+            written,
+            from: written.length,
+            done: false,
+            el: field.el
+        }
         clearTimeout(watchdog)
         watchdog = setTimeout(() => {
             if (
                 current?.id !== id ||
-                current.written ||
+                current.written.length > current.from ||
                 current.done ||
                 retries >= RETRIES
             )
                 return
             retries++
             drop()
-            ask()
+            ask(on)
         }, STUCK)
     }
 
@@ -327,6 +351,7 @@ import { ahead } from '../src/js/predict.js'
         if (current) send({ stop: true })
         current = null
         clearTimeout(timer)
+        timer = null
         clearTimeout(watchdog)
     }
 
@@ -348,11 +373,13 @@ import { ahead } from '../src/js/predict.js'
         }
         const rest = shown(state)
         // Guess anew once the typing pauses, unless the guess still has
-        // something to show or is still being written.
+        // something to show or is still being written; one running short
+        // is gone on from.
         if (rest === null || (rest === '' && current.done)) {
             drop()
-            if (state?.atEnd && wanted(before)) timer = setTimeout(ask, PAUSE)
-        }
+            if (typed && state?.atEnd && wanted(before))
+                timer = setTimeout(ask, PAUSE)
+        } else if (goOn(current, rest)) ask(current)
         draw()
     }
 
@@ -454,8 +481,38 @@ import { ahead } from '../src/js/predict.js'
 
     const px = (value) => parseFloat(value) || 0
 
-    function draw() {
+    // A page can move or resize a field, or change its text, with nothing
+    // this script hears: chatgpt.com's box changes its layout once it holds
+    // more than a line, a moment later, and a page empties its box as it
+    // sends, from a click. So while a guess shows, or the field has room
+    // made in it, its box and its text are checked every frame, and the
+    // guess drawn again, or the room given back, as they change.
+    const where = (box) => `${box.left} ${box.top} ${box.width} ${box.height}`
+    let placed = '' // the field's box when the guess was last drawn
+    let frame = 0
+
+    function follow() {
+        frame = 0
+        if (!field || !(visible() || grown?.el === field.el)) return
+        const box = where(field.el.getBoundingClientRect())
+        if (box !== placed || (caretIn(field)?.before ?? null) !== last) {
+            placed = box
+            changed()
+        }
+        frame ||= requestAnimationFrame(follow)
+    }
+
+    function draw(again = false) {
         const state = field ? caretIn(field) : null
+        // No field, or an emptied one (a message sent): its room given back.
+        // Its whole text, not what is before the caret: a selection, or the
+        // caret at the start, forgot the line break and left it in.
+        const text =
+            field?.kind === 'editable' ? field.el.textContent : field?.el.value
+        if (!wanted(text ?? '')) {
+            shrink()
+            broken = tried = null
+        }
         const rest = state?.atEnd ? shown(state) : null
         if (!rest) return hide()
         const hidden =
@@ -467,6 +524,8 @@ import { ahead } from '../src/js/predict.js'
         const { el, kind } = field
         const style = getComputedStyle(el)
         const box = el.getBoundingClientRect()
+        placed = where(box)
+        frame ||= requestAnimationFrame(follow)
         // The padding box, where a field's text can show.
         const inner = {
             left: box.left + px(style.borderLeftWidth),
@@ -474,7 +533,8 @@ import { ahead } from '../src/js/predict.js'
             width: el.clientWidth,
             height: el.clientHeight
         }
-        if (kind === 'editable') return drawAtCaret(l, el, state, rest, inner)
+        if (kind === 'editable')
+            return drawAtCaret(l, el, state, rest, inner, again)
         l.line.style.display = 'none'
         l.lineGhost.textContent = ''
         Object.assign(l.clip.style, {
@@ -501,14 +561,23 @@ import { ahead } from '../src/js/predict.js'
         if (kind === 'input') copy.lineHeight = copy.height
         l.typed.textContent = state.before
         l.copyGhost.textContent = rest
+        // How much taller the text and the guess are than the box.
+        const height = copy.height
+        copy.height = 'auto'
+        const past = l.copy.offsetHeight - inner.height
+        copy.height = height
         l.copy.scrollTop = el.scrollTop
         l.copy.scrollLeft = el.scrollLeft
+        if (kind !== 'input' && !again && past > 1 && grow(el, past)) draw(true)
     }
 
     // A contenteditable: the guess starts at the caret and wraps within the
-    // editor's width, in the font of the text at the caret. It may run
-    // below the editor (most grow as they fill), but not past its sides.
-    function drawAtCaret(l, el, state, rest, inner) {
+    // editor's width, in the font of the text at the caret. An editor that
+    // grows as it fills (most chat boxes) is given room for it (grow);
+    // otherwise it shows in whole lines, as many as fit in the editor's box
+    // and whatever clips it, since a guess run past them would lie over the
+    // page.
+    function drawAtCaret(l, el, state, rest, inner, again) {
         l.copy.style.display = 'none'
         l.typed.textContent = ''
         l.copyGhost.textContent = ''
@@ -532,18 +601,21 @@ import { ahead } from '../src/js/predict.js'
         l.probe.textContent = '\u200b'
         const lineHeight = l.probe.getBoundingClientRect().height || at.height
         const top = at.top - (lineHeight - at.height) / 2
+        const clipTop = Math.min(inner.top, top)
+        const bottom = roomBelow(el, inner, top + lineHeight)
+        const lines = Math.max(1, Math.floor((bottom - top + 2) / lineHeight))
         Object.assign(l.clip.style, {
             left: `${inner.left}px`,
-            top: `${inner.top}px`,
+            top: `${clipTop}px`,
             width: `${inner.width}px`,
-            height: `${Math.max(window.innerHeight - inner.top, 0)}px`
+            height: `${top + lines * lineHeight - clipTop}px`
         })
         const line = l.line.style
         for (const name of FONT) line[name] = style[name]
         Object.assign(line, {
             display: 'block',
             left: `${left - inner.left}px`,
-            top: `${top - inner.top}px`,
+            top: `${top - clipTop}px`,
             width: `${width}px`,
             padding: '0',
             lineHeight: `${lineHeight}px`,
@@ -551,7 +623,210 @@ import { ahead } from '../src/js/predict.js'
             color: style.color,
             whiteSpace: 'pre-wrap'
         })
-        l.lineGhost.textContent = rest
+        // A zero-width space first, so the guess's first word may start the
+        // next line whole: text-indent leaves no place to break before it,
+        // and near the end of a row it was split, or ran past the edge.
+        l.lineGhost.textContent = `\u200b${rest}`
+        const ghost = l.line.getBoundingClientRect().bottom
+        const past = ghost - inner.top - inner.height
+        if (again) return
+        if (past > 1 && grow(el, past)) return draw(true)
+        // Room given, but whatever holds the editor still cuts the guess.
+        const cut = ghost > top + lines * lineHeight + 1 && past <= 1
+        if (cut && grown?.el === el && Date.now() - grown.at > ROOM_WAIT) {
+            breakAfter(el)
+            draw(true)
+        }
+    }
+
+    // Room for a guess that runs past a field's box. A field that grows as
+    // it fills gets a min-height, up to its max-height; nothing is written
+    // into it, so its text, its undo and whatever the page does with them
+    // stay as typed. (A page that lays its box out anew as the field grows,
+    // as chatgpt.com's does, makes room for it too.) It keeps the room while
+    // it has the focus, so the box does not jump as guesses come and go,
+    // and gets its own min-height back when the focus leaves or it empties.
+    let grown = null // { el, value, priority }: the field, its own min-height
+
+    // A field grows as it fills unless it scrolls with no max-height: one
+    // that never scrolls (overflow visible, or hidden, as chatgpt.com's is
+    // logged in) must grow, or what is typed would be lost from sight; one
+    // with a max-height grows to it and scrolls after (most chat boxes).
+    // So does one sized to its text (field-sizing), or a text area a script
+    // sizes (an inline height).
+    function grows(el, style) {
+        if (el.localName === 'textarea' && el.style.height) return true
+        if (style.fieldSizing === 'content') return true
+        if (style.maxHeight !== 'none') return true
+        return style.overflowY !== 'auto' && style.overflowY !== 'scroll'
+    }
+
+    function grow(el, by) {
+        const style = getComputedStyle(el)
+        const most = px(style.maxHeight) || Infinity
+        const height = Math.min(Math.ceil(px(style.height) + by), most)
+        if (!grows(el, style) || height <= px(style.height)) return false
+        if (grown?.el !== el) {
+            shrink()
+            grown = {
+                el,
+                value: el.style.getPropertyValue('min-height'),
+                priority: el.style.getPropertyPriority('min-height'),
+                at: Date.now()
+            }
+            // Whether the room showed is looked at again once it has had
+            // time to (drawAtCaret).
+            setTimeout(draw, ROOM_WAIT + 50)
+        }
+        // Important: a page's own min-height may be (chatgpt.com's is), and
+        // would otherwise win over the room.
+        el.style.setProperty('min-height', `${height}px`, 'important')
+        return true
+    }
+
+    function shrink() {
+        if (!grown) return
+        grown.el.style.setProperty('min-height', grown.value, grown.priority)
+        grown = null
+    }
+
+    // The last resort, the visitor's idea (2026-11-26): an editor whose box
+    // ignores the room it is given, and grows only for its text
+    // (chatgpt.com's, logged in), gets a line break after the caret, which
+    // stays put, so its box grows as for a second line. The editor makes it
+    // itself, from a Shift+Enter sent to it, as the visitor would press:
+    // every break written into it natively (a new paragraph, a <br>) was
+    // taken by ProseMirror for Enter, which sends on chatgpt.com, and
+    // insertLineBreak wrote a newline it read as spaces. ProseMirror editors
+    // only, where Shift+Enter is a line break, once per focus or message. The
+    // break is taken out (natively: a deletion cannot pass for Enter) before
+    // Enter, Tab or Escape can reach the page and before a click elsewhere
+    // (a Send button), and only while it is all that follows the caret, so
+    // nothing typed is taken.
+    let broken = null // the editor a line break was made in
+    let tried = null // the editor last asked for one
+    let writing = false // our own edits, which the input handler ignores
+
+    // Whether all that follows the caret is a line break and no text.
+    function breakFollows(el, caret) {
+        const rest = caret.cloneRange()
+        rest.setEndAfter(el.lastChild)
+        const after = rest.cloneContents()
+        return (
+            Boolean(after.querySelector('br')) && !/\S/.test(after.textContent)
+        )
+    }
+
+    function breakAfter(el) {
+        if (tried === el || !el.classList.contains('ProseMirror')) return
+        tried = el
+        const { before, caret } = caretIn(field) ?? {}
+        // Left over (the focus went with no press outside): the same again.
+        if (caret && breakFollows(el, caret)) return (broken = el)
+        const selection = selectionIn(el)
+        const [node, offset] = [selection.focusNode, selection.focusOffset]
+        writing = true
+        try {
+            el.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'Enter',
+                    code: 'Enter',
+                    shiftKey: true,
+                    bubbles: true,
+                    cancelable: true,
+                    composed: true
+                })
+            )
+        } finally {
+            writing = false
+        }
+        const moved =
+            selection.focusNode !== node || selection.focusOffset !== offset
+        if (!moved) return console.warn('page: no line break made; still cut')
+        // Back where it was, before the break (moving back a character
+        // skipped the break and a letter in Firefox).
+        if (node.isConnected) selection.collapse(node, offset)
+        const state = caretIn(field)
+        if (state?.before === before && breakFollows(el, state.caret))
+            broken = el
+        else console.warn('page: the line break is not where it should be')
+    }
+
+    // A press outside the editor takes its line break out first, so a click
+    // on Send sends none. The box then lays itself out anew and the button
+    // can move from under the pointer, so a press that started on a control
+    // that has moved away by the release gets its click all the same.
+    let pressed = null // the control a press took a line break out from under
+
+    function onPress(event) {
+        if (!broken || broken.contains(event.target)) return
+        const control = event.target.closest?.(
+            'button, a[href], [role="button"], input[type="submit"]'
+        )
+        unbreak()
+        pressed = control && { control, at: control.getBoundingClientRect() }
+    }
+
+    function onRelease(event) {
+        const press = pressed
+        pressed = null
+        if (!press?.control.isConnected) return
+        const now = press.control.getBoundingClientRect()
+        const moved = now.left !== press.at.left || now.top !== press.at.top
+        const under = document.elementFromPoint(event.clientX, event.clientY)
+        if (moved && !press.control.contains(under))
+            setTimeout(() => press.control.click())
+    }
+
+    // Take the line break out, wherever the caret is now (moved into the
+    // text, the break stayed, and went out with Enter): the caret goes just
+    // before the break, which is deleted natively, and the caret or
+    // selection goes back. Only a break with nothing but breaks and spaces
+    // after it, so never the visitor's own between lines.
+    function unbreak() {
+        const el = broken
+        broken = null
+        if (field?.el !== el) return
+        const br = [
+            ...el.querySelectorAll('br:not(.ProseMirror-trailingBreak)')
+        ].pop()
+        if (!br) return
+        const at = document.createRange()
+        at.setStartBefore(br)
+        if (!breakFollows(el, at)) return
+        const selection = selectionIn(el)
+        const back = [
+            selection.anchorNode,
+            selection.anchorOffset,
+            selection.focusNode,
+            selection.focusOffset
+        ]
+        selection.collapse(at.startContainer, at.startOffset)
+        writing = true
+        try {
+            document.execCommand('forwardDelete')
+        } finally {
+            writing = false
+        }
+        if (back[0]?.isConnected && back[2]?.isConnected)
+            selection.setBaseAndExtent(...back)
+    }
+
+    // How far down an editor's text can show: to the bottom of its own box,
+    // of whatever clips or scrolls it on the way up, or of the window,
+    // whichever comes first. A box that ends above the caret's line is not
+    // what clips it (an editor in a fixed bar escapes the page's scroller).
+    function roomBelow(el, inner, lineBottom) {
+        const ends = [inner.top + inner.height, window.innerHeight]
+        const up = (node) => node.parentElement ?? node.getRootNode().host
+        for (let n = up(el); n && n !== document.body; n = up(n)) {
+            const style = getComputedStyle(n)
+            if (style.overflowY === 'visible') continue
+            const box = n.getBoundingClientRect()
+            ends.push(box.top + px(style.borderTopWidth) + n.clientHeight)
+        }
+        const clipping = ends.filter((end) => end >= lineBottom - 2)
+        return clipping.length ? Math.min(...clipping) : lineBottom
     }
 
     // Where the caret is drawn, as { left, top, height }. A collapsed range
@@ -636,15 +911,27 @@ import { ahead } from '../src/js/predict.js'
 
     // Only the visitor's own keys: a page's made-up key events (isTrusted
     // false) cannot take a guess, or use the model through it.
+    // A run of Tabs can outpace the model: the guess all kept, the next not
+    // shown yet. So Tabs in a run are taken while a guess is on its way, or
+    // for RUN ms after the last, and pressing Tab fast never sends the focus
+    // to the page's next field (Gmail's Send). Any other key, or another
+    // field, ends the run; then Tab is the page's whenever no guess shows,
+    // and Shift+Tab always is.
+    let run = 0 // when the run's last Tab was pressed
+    const coming = () => Boolean(timer || (current && !current.done))
+
     function onKeyDown(event) {
         if (event.isComposing || !field || !event.isTrusted) return
         const plain = !event.ctrlKey && !event.altKey && !event.metaKey
+        if (event.key !== 'Tab' || event.shiftKey || !plain) run = 0
         if (event.key === 'Tab' && !event.shiftKey && plain) {
             // A held Tab keeps its keys, even once the guess is all kept,
             // so the focus does not jump away mid-hold.
-            if (!holding && !visible()) return
+            const running = run && (Date.now() - run < RUN || coming())
+            if (!holding && !visible() && !running) return unbreak()
             event.preventDefault()
             event.stopImmediatePropagation()
+            run = Date.now()
             if (event.repeat || holding) return
             takeWord()
             const hold = (holding = {
@@ -658,6 +945,8 @@ import { ahead } from '../src/js/predict.js'
             event.stopImmediatePropagation()
             drop()
             draw()
+        } else if (event.key === 'Enter' || event.key === 'Escape') {
+            unbreak()
         }
     }
 
@@ -678,6 +967,10 @@ import { ahead } from '../src/js/predict.js'
         if (found?.el === field?.el) return
         release()
         drop()
+        shrink()
+        run = 0
+        broken = tried = null
+        typed = false
         field = found
         last = null
         if (field) wake()
@@ -691,7 +984,17 @@ import { ahead } from '../src/js/predict.js'
     addEventListener('keyup', onKeyUp, true)
     addEventListener('focusin', onFocus, true)
     addEventListener('focusout', () => setTimeout(onFocus), true)
-    addEventListener('input', () => field && changed(), true)
+    addEventListener(
+        'input',
+        () => {
+            if (!field || writing) return
+            typed = true
+            changed()
+        },
+        true
+    )
+    addEventListener('pointerdown', onPress, true)
+    addEventListener('pointerup', onRelease, true)
     addEventListener('blur', release)
     document.addEventListener('selectionchange', () => field && changed())
     addEventListener('scroll', () => current && draw(), {
