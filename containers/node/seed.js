@@ -16,8 +16,9 @@
 //   into the same place (pieces it shares with the old one stay), and the
 //   files it dropped are deleted once it is whole.
 // - It sits in every chat listed in CHATS and relays messages like any
-//   tab would. Being reachable more often than a browser, it bridges peers
-//   that could not reach each other.
+//   tab would: only those it can verify, for that chat and in time, so a
+//   forgery or a replay stops here. Being reachable more often than a
+//   browser, it bridges peers that could not reach each other.
 //
 // ANNOUNCE is the list of public trackers written into .torrent files.
 // TRACKERS are extra trackers this peer announces to without publishing
@@ -28,13 +29,16 @@ import path from 'node:path'
 import WebTorrent from 'webtorrent'
 import parseTorrent, { toTorrentFile } from 'parse-torrent'
 import { describePorts, webrtc } from './webrtc.js'
-// Shared with the browser, so both derive the same room torrents.
+// Shared with the browser, so both derive the same room torrents and read
+// messages alike.
 import {
     chatExtension,
     createGossip,
     relay,
-    roomFile
+    roomFile,
+    toVerify
 } from '../../src/js/room.js'
+import { verify } from '../../src/js/crypto.js'
 
 const RADIO_DIR = process.env.RADIO_DIR || '/radio'
 const TORRENTS_DIR = process.env.TORRENTS_DIR || '/torrents'
@@ -325,7 +329,11 @@ function keepFetched(frequency) {
 async function joinRoom(room) {
     const gossip = createGossip()
     const torrent = await seed(roomFile(room), { announce: TRACKERS })
-    const Chat = chatExtension((payload, from) => {
+    const Chat = chatExtension(async (payload, from) => {
+        if (gossip.has(payload.id)) return
+        const text = toVerify(payload, room)
+        if (!text || !(await verify(payload.pubKey, payload.signature, text)))
+            return
         if (gossip.fresh(payload.id)) relay(payload, from, torrent.wires)
     })
     torrent.on('wire', (wire) => wire.use(Chat))

@@ -692,15 +692,17 @@ export function createAsker({
         )
 
     // The entry for a question's key: kept if in flight or fresh, else
-    // fetched anew. Only the latest waits for a mask; an older one waiting is
-    // let go (its guesses get nothing).
-    function fetch(asked) {
+    // fetched anew, or always (`anew`), a fresh kept one's records answering
+    // until the new ones come. Only the latest waits for a mask; an older one
+    // waiting is let go (its guesses get nothing).
+    function fetch(asked, anew = false) {
         const kept = fetched.get(asked.hash)
-        if (kept && (!kept.done || fresh(kept))) return kept
+        const good = kept && (!kept.done || fresh(kept))
+        if (good && !anew) return kept
         const entry = {
             asked,
             versions: new Map(),
-            records: new Map(),
+            records: new Map(good ? kept.records : []),
             done: false,
             at: Date.now(),
             waiters: new Set()
@@ -710,7 +712,8 @@ export function createAsker({
         while (fetched.size > KEEP) fetched.delete(fetched.keys().next().value)
         if (queued) {
             counts.dropped++
-            fetched.delete(queued.asked.hash)
+            if (fetched.get(queued.asked.hash) === queued)
+                fetched.delete(queued.asked.hash)
             settle(queued)
             queued = null
         }
@@ -766,10 +769,12 @@ export function createAsker({
         entry.waiters.add({ asked, tell })
     }
 
-    // Fetch the record a context's key picks, for the guesses to come.
+    // Fetch the record a context's key picks as its word starts, for the
+    // guesses to come: always a query, so a peer cannot tell a context it
+    // was asked about before (a kept record would have sent none).
     function prefetch(context) {
         const asked = question(context)
-        if (asked && ready().length) fetch(asked)
+        if (asked && ready().length) fetch(asked, true)
     }
 
     const status = () => ({

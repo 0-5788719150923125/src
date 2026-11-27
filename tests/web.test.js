@@ -10,14 +10,18 @@ import {
     tracksOf
 } from '../src/js/station.js'
 import {
+    AGE,
     EXTENSION,
     chatExtension,
     createGossip,
     isPlain,
     relay,
     roomFile,
-    sendTo
+    sendTo,
+    signed,
+    toVerify
 } from '../src/js/room.js'
+import { keysFor, randomHex, sign, verify } from '../src/js/crypto.js'
 import { createStore } from '../src/js/state.js'
 import { buildChain, generateOne } from '../src/js/daemon.js'
 import { seededRandom } from '../src/js/random.js'
@@ -162,13 +166,44 @@ test('messages relay to every other wire, once', () => {
     assert.equal(sendTo({ ...fakeWire(), destroyed: true }, { id: 'y' }), false)
 })
 
-test('gossip forgets the oldest ids past its size', () => {
-    const gossip = createGossip(2)
-    assert.equal(gossip.fresh('a'), true)
-    assert.equal(gossip.fresh('a'), false)
-    gossip.fresh('b')
-    gossip.fresh('c')
-    assert.equal(gossip.fresh('a'), true)
+test('gossip remembers ids while a message is in time, and so many at most', () => {
+    const gossip = createGossip(1000, 2)
+    assert.equal(gossip.fresh('a', 0), true)
+    assert.equal(gossip.fresh('a', 1), false)
+    assert.equal(gossip.has('a'), true)
+    gossip.fresh('b', 2)
+    gossip.fresh('c', 3)
+    assert.equal(gossip.fresh('a', 4), true) // past the most
+    gossip.fresh('d', 2000)
+    assert.equal(gossip.has('c'), false) // past the span
+})
+
+test("a signature covers a message's chat, id and time, so it cannot be moved or replayed", async () => {
+    const keys = await keysFor(randomHex(96))
+    const now = Date.now()
+    const payload = { id: 'x1', room: 'trade', at: now, message: 'hi' }
+    payload.pubKey = keys.pub
+    payload.signature = await sign(keys, signed(payload))
+    const reads = async (p, room = 'trade', at = now) => {
+        const text = toVerify(p, room, at)
+        return Boolean(text) && verify(p.pubKey, p.signature, text)
+    }
+    assert.equal(await reads(payload), true)
+    // Sent in another chat, as it stands or relabeled.
+    assert.equal(await reads(payload, 'secret'), false)
+    assert.equal(await reads({ ...payload, room: 'secret' }, 'secret'), false)
+    // Sent again under a new id, or with a new time.
+    assert.equal(await reads({ ...payload, id: 'x2' }), false)
+    assert.equal(await reads({ ...payload, at: now + 1 }), false)
+    // Replayed later, or from a clock far ahead.
+    assert.equal(await reads(payload, 'trade', now + AGE + 1), false)
+    assert.equal(await reads(payload, 'trade', now - AGE - 1), false)
+    assert.equal(await reads(payload, 'trade', now + AGE), true)
+    // No time, or the old form that signed the text alone.
+    const { at, ...timeless } = payload
+    assert.equal(await reads(timeless), false)
+    const old = { ...timeless, signature: await sign(keys, 'hi') }
+    assert.equal(await reads({ ...old, at: now }), false)
 })
 
 test('the store sets, reads and deletes nested keys, never in place', () => {

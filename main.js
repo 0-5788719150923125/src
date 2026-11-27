@@ -24,6 +24,7 @@ const { values: args } = parseArgs({
         undeploy: { type: 'boolean' },
         extension: { type: 'boolean' },
         publish: { type: 'string' },
+        privacy: { type: 'string' },
         yes: { type: 'boolean', short: 'y' },
         out: { type: 'string', default: DEFAULT_OUT },
         host: { type: 'string', default: '127.0.0.1' },
@@ -42,6 +43,7 @@ if (args.help) {
                     [--port N] [--host ADDR] [--out DIR] [--project NAME] [--domain NAME]
        node main.js --peers N [--data tinystories|quijote|git|FILE] [--chat NAME]
        node main.js --extension | --publish chrome|firefox|all [--yes]
+       node main.js --privacy chromium|firefox|all
 
   (no flag)   build, then serve at http://localhost:8000 with live reload;
               restarts itself when main.js, scripts/ or .env change
@@ -57,7 +59,9 @@ if (args.help) {
   --extension build the browser extension into build/extension/ (a folder
               to load unpacked, and a zip, per browser)
   --publish S build it, then upload it to a store: chrome, firefox or all
-              (credentials in .env); shows the plan and asks first`)
+              (credentials in .env); shows the plan and asks first
+  --privacy B build it, then check its privacy promises in a headless
+              browser: chromium, firefox or all (PRIVACY.md)`)
     process.exit(0)
 }
 
@@ -120,7 +124,8 @@ const serving =
     !args.deploy &&
     !args.undeploy &&
     !args.extension &&
-    args.publish === undefined
+    args.publish === undefined &&
+    args.privacy === undefined
 if (serving && !process.env.SRC_WATCHED) {
     const watched = ['main.js', 'scripts', '.env']
         .map((name) => path.join(ROOT, name))
@@ -153,6 +158,20 @@ async function run() {
                 ? 0
                 : 1
         )
+    if (args.privacy !== undefined) {
+        const { checkPrivacy } = await import('./scripts/privacy.js')
+        const browsers =
+            args.privacy === 'all' ? ['chromium', 'firefox'] : [args.privacy]
+        if (!browsers.every((b) => ['chromium', 'firefox'].includes(b))) {
+            console.log('usage: node main.js --privacy chromium|firefox|all')
+            process.exit(1)
+        }
+        const { built } = await buildExtension({ browsers })
+        const passed = []
+        for (const { browser, dir } of built)
+            passed.push(await checkPrivacy(browser, dir))
+        process.exit(passed.includes(false) || !passed.some(Boolean) ? 1 : 0)
+    }
     if (args.extension || args.publish !== undefined) {
         const built = await buildExtension()
         if (args.publish === undefined) process.exit(0)

@@ -22,6 +22,7 @@
     "publish:chrome": "node main.js --publish chrome",
     "publish:firefox": "node main.js --publish firefox",
     "publish:stores": "node main.js --publish all",
+    "privacy": "node main.js --privacy all",
     "stack": "docker compose up -d --build",
     "stack:attached": "docker compose up --build",
     "stack:logs": "docker compose --profile test --profile tunnel --profile public logs -f --tail 100",

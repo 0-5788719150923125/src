@@ -2,66 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { keysFor } from '../src/js/crypto.js'
 import { SHAPE } from '../src/js/pir.js'
-import {
-    createAnswerer,
-    createAsker,
-    privateExtension
-} from '../src/js/private.js'
+import { createAnswerer, createAsker } from '../src/js/private.js'
+import { ask, connect, ready, spansOf, until } from './wires.js'
 
 const S = { ...SHAPE, cols: 64 }
 const ARCHIVES =
     '\nthe quick brown fox jumps over the lazy dog\nthe archives say the signal started before the network did\n'
-
-// Two fake wires joined to each other, as BitTorrent wires carrying the
-// extension; `drop(bytes)` loses messages, `sent` keeps what each side sent.
-function connect(asker, answerer, { drop = () => false } = {}) {
-    const make = () => ({
-        peerExtendedMapping: { src_pir: 1 },
-        destroyed: false,
-        sent: [],
-        closers: [],
-        once(event, fn) {
-            if (event === 'close') this.closers.push(fn)
-        }
-    })
-    const a = make()
-    const b = make()
-    const pass = (from, to) => (name, buf) => {
-        const bytes = Uint8Array.from(buf)
-        // What a data channel to Node takes, less the BitTorrent framing.
-        if (bytes.length > 65536 - 6)
-            throw new Error(`message of ${bytes.length} bytes`)
-        from.sent.push(bytes)
-        if (!drop(bytes, from === a))
-            setImmediate(() => to.ext.onMessage(bytes))
-    }
-    a.extended = pass(a, b)
-    b.extended = pass(b, a)
-    a.ext = new (privateExtension(asker.handle))(a)
-    b.ext = new (privateExtension(answerer.handle))(b)
-    a.ext.onExtendedHandshake({ m: { src_pir: 1 } })
-    b.ext.onExtendedHandshake({ m: { src_pir: 1 } })
-    return { a, b }
-}
-
-const until = async (ok, ms = 5000) => {
-    for (const end = Date.now() + ms; !ok();) {
-        if (Date.now() > end) throw new Error('timed out')
-        await new Promise((r) => setTimeout(r, 10))
-    }
-}
-
-// The asker's final memory about `context`.
-const ask = (asker, context) =>
-    new Promise((resolve) =>
-        asker.ask(context, (memory, done) => done && resolve(memory))
-    )
-const spansOf = (memory) => (memory?.spans ?? []).map(([text]) => text)
-
-async function ready(asker, peers = 1) {
-    await until(() => asker.status().ready >= peers)
-    await asker.fill()
-}
 
 // An answerer holding ARCHIVES, and an asker connected to it, ready.
 async function pair(answering = {}, asking = {}) {
@@ -247,6 +193,19 @@ test('the record fetched as a word starts answers every guess within it, at once
     }
     assert.equal(asker.status().asked, 1)
     assert.equal(answerer.stats.questions, 1)
+})
+
+test('a word start asks again for a context asked before, so a repeat looks like any word', async () => {
+    const { answerer, asker } = await pair()
+    asker.prefetch('they say the archives say the ')
+    await until(() => asker.status().answered === 1)
+    asker.prefetch('and again: the archives say the ')
+    // The kept record answers at once, while the new query is out.
+    let got = null
+    asker.ask('and again: the archives say the sig', (memory) => (got = memory))
+    assert.deepEqual(spansOf(got), ['nal started before the'])
+    await until(() => asker.status().answered === 2)
+    assert.equal(answerer.stats.questions, 2)
 })
 
 test('a kept record is fetched again once its peer changes', async () => {

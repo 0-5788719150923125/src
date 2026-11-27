@@ -363,13 +363,15 @@ import { ahead, goOn } from '../src/js/predict.js'
         if (before === last && !again) return draw()
         if (before !== last) retries = 0
         last = before
-        // A word starts: what the swarm's memory holds for it can be fetched
-        // while it is typed (host.js), so the guesses within it need not wait.
-        if (ready && state?.atEnd && before !== started && /\s$/.test(before)) {
-            started = before
-            send({
-                prefetch: { line: before.slice(startOf(field.el, before)) }
-            })
+        // A word starts, or typing goes on in another (after a focus, or
+        // back into the last): what the swarm's memory holds for it is
+        // fetched while it is typed (host.js), so the guesses within it need
+        // not wait. Each is a query, whatever the word, so peers see when
+        // words start and nothing of which.
+        const start = before?.replace(/\S+$/, '')
+        if (ready && typed && state?.atEnd && start !== started) {
+            started = start
+            send({ prefetch: { line: start.slice(startOf(field.el, start)) } })
         }
         const rest = shown(state)
         // Guess anew once the typing pauses, unless the guess still has
@@ -972,7 +974,7 @@ import { ahead, goOn } from '../src/js/predict.js'
         broken = tried = null
         typed = false
         field = found
-        last = null
+        last = started = null
         if (field) wake()
         draw()
     }

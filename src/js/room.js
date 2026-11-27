@@ -51,14 +51,45 @@ export const sendTo = (wire, payload) => send(wire, EXTENSION, json(payload))
 export const relay = (payload, from, wires) =>
     wires.filter((wire) => wire !== from).map((wire) => sendTo(wire, payload))
 
-// Remembers the last `size` message ids; fresh() is true once per id.
-export function createGossip(size = 1024) {
-    const seen = new Set()
+// How far a message's time may be from the reader's clock, either way: an
+// older one is a replay, and clocks differ.
+export const AGE = 10 * 60 * 1000
+
+// What a message's signature covers: its chat, id and time with its text,
+// so a line cannot be moved to another chat, sent again under a new id, or
+// replayed later.
+export const signed = ({ room, id, at, message }) =>
+    JSON.stringify([room, id, at, message])
+
+// What a message's signature must verify against, or null for one that is
+// malformed, for another chat, or out of time.
+export function toVerify(payload, room, now = Date.now()) {
+    const { id, at, message, pubKey, signature } = payload
+    const strings = [id, message, pubKey, signature]
+    if (
+        payload.room !== room ||
+        !strings.every((s) => typeof s === 'string') ||
+        !Number.isFinite(at) ||
+        Math.abs(now - at) > AGE
+    )
+        return null
+    return signed(payload)
+}
+
+// Remembers message ids for `span` ms, as long as a message stays in time,
+// and `most` at most: has(id) says whether one was seen, fresh(id) is true
+// once per id. Readers take ids only once a message verifies.
+export function createGossip(span = 2 * AGE, most = 50000) {
+    const seen = new Map() // id -> when it was seen, oldest first
     return {
-        fresh(id) {
+        has: (id) => seen.has(id),
+        fresh(id, now = Date.now()) {
             if (seen.has(id)) return false
-            seen.add(id)
-            if (seen.size > size) seen.delete(seen.values().next().value)
+            seen.set(id, now)
+            for (const [old, at] of seen) {
+                if (now - at < span && seen.size <= most) break
+                seen.delete(old)
+            }
             return true
         }
     }

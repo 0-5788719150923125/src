@@ -27,6 +27,18 @@ When you start typing, a small language model running in your tab writes ahead o
 
 <details>
 
+<summary>privacy and security</summary>
+
+- **Typing in other sites' fields** (the extension) stays on your device: the model runs there. The swarm's memory is asked only by private information retrieval, an encrypted query its peers cannot read. Nothing typed there is stored, added to any memory, or sent in the clear, and password and personal-detail fields get no guesses at all.
+- **The terminal is a public chat.** Messages go to everyone in it, signed and encrypted in transit; the ghost text asks the chat's peers about the line you are typing, in the clear, before you send it.
+- **Peers see your network address**, as in any peer-to-peer app, and the public trackers see which chats and stations you join.
+
+[PRIVACY.md](PRIVACY.md) is the privacy policy: the whole list, how strong the encryption is and what it does not hide, and how to check it yourself, with nothing to install: `node --test tests/privacy.test.js` checks the encryption, and `node main.js --privacy all` checks the extension in a real Chromium and Firefox.
+
+</details>
+
+<details>
+
 <summary>layout</summary>
 
 - **[`src/`](src/)** - The site. No bundler: the build copies it and fills in the configuration.
@@ -58,6 +70,7 @@ node main.js --undeploy # take it down again: project, domain, DNS, mirror, rela
 node main.js --peers 8  # test peers that remember children's stories (see below)
 node main.js --extension          # build the browser extension (see below)
 node main.js --publish chrome     # build it and upload it to a store: chrome, firefox or all (asks first)
+node main.js --privacy all        # build it and check its privacy promises in headless Chromium and Firefox (PRIVACY.md)
 npm run rules           # how the quality rules score their examples; --fit, or a "line"
 ```
 
@@ -118,7 +131,7 @@ Two browsers behind strict NATs, such as a phone on a cellular network, cannot c
 
 - **The terminal:** the toolbar button opens the site's own terminal, with everything in it: chat, the radio, the ghost text. What was on its screen, and the chat it was in, come back when it opens again (until the browser closes). It also opens in the side panel (Chrome) or the sidebar (Firefox), which stays open while you browse, so chat goes on.
 - **The radio plays in the background,** so closing the popup does not stop it; `/radio` again does. Once the terminal has been opened, the extension also shares the songs it holds with other listeners until the browser closes, as an open tab of the site does.
-- **Ghost text everywhere:** in other sites' text fields (inputs, textareas, and the editors chat boxes and mail are made of), the same model guesses how your line goes on, drawn after the caret, faded, with the same wave. Tab keeps a word, held it keeps them all, Escape hides it, and Tab and Escape are left to the page whenever no guess is showing. Never in password, payment, address or other personal-detail fields, never in code editors, and only with the caret at the end of the text. A page can opt a field out with `data-src-ghost="off"`. What is typed goes to the extension's model, in the browser, and to the swarm's memory only as an encrypted question that the answering peers cannot read (private information retrieval; see [next/private-memory.md](next/private-memory.md)). The chat itself is never asked.
+- **Ghost text everywhere:** in other sites' text fields (inputs, textareas, and the editors chat boxes and mail are made of), the same model guesses how your line goes on, drawn after the caret, faded, with the same wave. Tab keeps a word, held it keeps them all, Escape hides it, and Tab and Escape are left to the page whenever no guess is showing. Never in password, payment, address or other personal-detail fields, never in code editors, and only with the caret at the end of the text. A page can opt a field out with `data-src-ghost="off"`. What is typed goes to the extension's model, in the browser, and to the swarm's memory only as an encrypted question that the answering peers cannot read (private information retrieval; see [PRIVACY.md](PRIVACY.md)). The chat itself is never asked.
 - **One model for the whole browser:** it loads the first time you type in a page or open the terminal, once for every tab and the terminal too (in Chrome, in an offscreen document; in Firefox, in the background page), so the terminal's ghost is ready as the popup opens. It is let go after 30 minutes without a guess. The toolbar button shows its first download.
 
 To try it, load `build/extension/chromium/` in `chrome://extensions` (developer mode, "Load unpacked"), or `build/extension/firefox/manifest.json` in Firefox's `about:debugging` ("This Firefox", "Load Temporary Add-on").

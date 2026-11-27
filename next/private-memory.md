@@ -127,7 +127,7 @@ The shelves cost a little accuracy. When someone types text the memory holds, th
 Not done yet:
 
 - **Pinning the servers' keys.** Each server made its own key the first time it started, and logs the public half. Listing those keys when building the extension (`SRC_PINNED_KEYS`) lets it count the project's servers above strangers; until then, the servers count like anyone else. Browsers answer either way.
-- **Checking the safety margins.** The size of the puzzle (how many secret numbers, how much error) follows a published choice made to withstand the best known attacks. It should be confirmed with the standard tool for that before anything sensitive relies on it, along with whether the shared public numbers should be renewed from time to time.
+- **Checking the safety margins.** The size of the puzzle (how many secret numbers, how much error) follows a published choice made to withstand the best known attacks. By the quick method lattice schemes report, those attacks cost about 2^145 operations on a classical computer and 2^132 on a quantum one (`tests/privacy.test.js`, which [PRIVACY.md](../PRIVACY.md) walks through). It should still be confirmed with the standard tool for that, the lattice estimator, before anything sensitive relies on it, along with whether the shared public numbers should be renewed from time to time.
 - **Remembering hints between sessions.** Each new browser session downloads each answerer's hint again.
 - **A switch.** There is no way yet to turn the memory off while keeping the ghost.
 - **A phone**, asking and answering, with the model running beside it.

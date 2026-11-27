@@ -35,7 +35,9 @@ import {
     isPlain,
     relay,
     roomFile,
-    sendTo
+    sendTo,
+    signed,
+    toVerify
 } from './room.js'
 import { state } from './state.js'
 import { html, t } from './text.js'
@@ -109,19 +111,18 @@ async function enter(chat) {
 
 // ------------------------------------------------------------ messages
 
-// A message as this tab can read it, or null: its signature checked, plain
-// text of a sane length.
-async function read({ message, pubKey, signature }) {
-    if (
-        typeof message !== 'string' ||
-        typeof pubKey !== 'string' ||
-        typeof signature !== 'string'
-    )
+// A message as this tab can read it, or null: for this chat, in time, its
+// signature checked (room.js toVerify), plain text of a sane length.
+async function read(payload) {
+    const text = toVerify(payload, session.name)
+    if (!text || !(await verify(payload.pubKey, payload.signature, text)))
         return null
-    if (!(await verify(pubKey, signature, message))) return null
+    let { message } = payload
     if (message.length > MAX_LENGTH) return null
     message = message.replace(/\n/g, ' ')
-    return message && isPlain(message) ? { message, sender: pubKey } : null
+    return message && isPlain(message)
+        ? { message, sender: payload.pubKey }
+        : null
 }
 
 // Flooding. Every peer passes on what it has not seen, so one peer sending
@@ -163,14 +164,14 @@ function senderAllows(key) {
 async function receive(payload, fromWire) {
     if (
         !session.room ||
-        !session.gossip.fresh(payload.id) ||
-        !wireAllows(fromWire) ||
-        payload.room !== session.name
+        session.gossip.has(payload.id) ||
+        !wireAllows(fromWire)
     )
         return
     try {
         const { message, sender } = (await read(payload)) ?? {}
-        if (!message || !senderAllows(sender)) return
+        if (!message || !session.gossip.fresh(payload.id)) return
+        if (!senderAllows(sender)) return
         relay(payload, fromWire, session.room.wires)
         notify(`${handle(SPEAKERS.fold)} ${message}`)
         keep(message)
@@ -198,10 +199,11 @@ export async function send(message) {
     const payload = {
         id: randomHex(32),
         room: session.name,
+        at: Date.now(),
         message,
-        pubKey: keys.pub,
-        signature: await sign(keys, message)
+        pubKey: keys.pub
     }
+    payload.signature = await sign(keys, signed(payload))
     session.gossip.fresh(payload.id)
     for (const wire of session.room?.wires ?? []) sendTo(wire, payload)
 }
