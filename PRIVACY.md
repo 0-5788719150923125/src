@@ -42,6 +42,8 @@ A signature covers a message's text, its chat, its id and the time it was sent. 
 
 A random secret your key pair is made from, the chat lines above, the songs you hold, the chat you were in, the model you chose, and, in the extension, what was on the terminal's screen until the browser closes. All of it stays in your browser. Typing `/reset` in the terminal forgets all of it. Removing the extension removes everything it kept.
 
+A development copy of the extension (loaded unpacked, or as a temporary add-on, as when you build it from source) also keeps a trace of what the ghost did in the last page field you used, for bug reports: lengths, the caret, timing, and the text around the caret with every letter and digit masked, so no words. It stays in the browser and is sent nowhere. Copies installed from a store keep none.
+
 ---
 
 ## Who else is involved

@@ -25,6 +25,7 @@ const { values: args } = parseArgs({
         extension: { type: 'boolean' },
         publish: { type: 'string' },
         privacy: { type: 'string' },
+        trace: { type: 'boolean' },
         yes: { type: 'boolean', short: 'y' },
         out: { type: 'string', default: DEFAULT_OUT },
         host: { type: 'string', default: '127.0.0.1' },
@@ -44,6 +45,7 @@ if (args.help) {
        node main.js --peers N [--data tinystories|quijote|git|FILE] [--chat NAME]
        node main.js --extension | --publish chrome|firefox|all [--yes]
        node main.js --privacy chromium|firefox|all
+       node main.js --trace
 
   (no flag)   build, then serve at http://localhost:8000 with live reload;
               restarts itself when main.js, scripts/ or .env change
@@ -61,11 +63,17 @@ if (args.help) {
   --publish S build it, then upload it to a store: chrome, firefox or all
               (credentials in .env); shows the plan and asks first
   --privacy B build it, then check its privacy promises in a headless
-              browser: chromium, firefox or all (PRIVACY.md)`)
+              browser: chromium, firefox or all (PRIVACY.md)
+  --trace     copy the latest trace a development install of the extension
+              kept in Firefox into build/traces/ (extension/host.js)`)
     process.exit(0)
 }
 
 if (args.peers !== undefined) process.exit(await peers())
+if (args.trace) {
+    const { readTrace } = await import('./scripts/trace.js')
+    process.exit(readTrace() ? 0 : 1)
+}
 
 // Test peers run from the stack's folder, which has WebRTC for Node
 // (node-datachannel, a native module the root install leaves out).

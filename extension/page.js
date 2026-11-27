@@ -42,6 +42,8 @@ import { ahead, goOn } from '../src/js/predict.js'
     // Held, Tab keeps a word every TAKE_EVERY ms once HOLD ms have passed.
     const HOLD = 220
     const TAKE_EVERY = 25
+    // How long a word kept may take to show before the next is kept anyway.
+    const SHOW_WAIT = 250
     // Tabs in a run go on being taken for this long after the last, or
     // while a guess is on its way (see onKeyDown).
     const RUN = 1000
@@ -188,6 +190,56 @@ import { ahead, goOn } from '../src/js/predict.js'
         }
     }
 
+    // ------------------------------------------------------------ tracing
+
+    // For bug reports, in a development install only (loaded unpacked, or
+    // as a temporary add-on; the background says so in `tracing`): the
+    // steps the ghost takes in a field, each with the field's length, the
+    // caret, what of the guess shows, and the text around the caret with
+    // every letter and digit masked, never the words. Sent to the host as
+    // Tab is let go or the field is left, which keeps the latest (host.js).
+    const STEPS = 4000
+    const steps = []
+    let tracing = false
+    let unsent = false
+    api.storage.local
+        .get('tracing')
+        .then(({ tracing: on }) => (tracing = Boolean(on)))
+        .catch((err) => console.warn('src: tracing unread:', err.message))
+    api.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.tracing)
+            tracing = Boolean(changes.tracing.newValue)
+    })
+    const mask = (text) =>
+        text.replace(/\p{L}|\p{M}/gu, 'x').replace(/\p{N}/gu, '0')
+
+    function note(step, more) {
+        if (!tracing || !field) return
+        const { el, kind } = field
+        const text = kind === 'editable' ? textOf(el) : el.value
+        const state = caretIn(field)
+        const at = state ? state.before.length : -1
+        const near = text.slice(Math.max(at - 12, 0), at) + '|'
+        steps.push({
+            t: Math.round(performance.now()),
+            step,
+            length: text.length,
+            caret: at,
+            ghost: shown(state)?.length ?? -1,
+            near: at < 0 ? '' : mask(near + text.slice(at, at + 12)),
+            ...more
+        })
+        if (steps.length > STEPS) steps.splice(0, steps.length - STEPS)
+        unsent = true
+    }
+
+    function keepSteps() {
+        if (unsent && send({ trace: { site, steps } })) unsent = false
+    }
+
+    // The field's own changes, whoever makes them.
+    const watcher = new MutationObserver(() => note('dom'))
+
     // ------------------------------------------------------------ the host
 
     let port = null
@@ -248,6 +300,7 @@ import { ahead, goOn } from '../src/js/predict.js'
             })
         if (ghost.text) current.written += ghost.text
         if (ghost.done) current.done = true
+        note('guess', ghost.reset ? { reset: true } : undefined)
         if (goOn(current, shown())) ask(current)
         draw()
     }
@@ -629,8 +682,10 @@ import { ahead, goOn } from '../src/js/predict.js'
         // next line whole: text-indent leaves no place to break before it,
         // and near the end of a row it was split, or ran past the edge.
         l.lineGhost.textContent = `\u200b${rest}`
+        // How far the guess runs past where text may go: above the bottom
+        // padding, as a line typed would (Discord's box grew short).
         const ghost = l.line.getBoundingClientRect().bottom
-        const past = ghost - inner.top - inner.height
+        const past = ghost - inner.top - inner.height + px(outer.paddingBottom)
         if (again) return
         if (past > 1 && grow(el, past)) return draw(true)
         // Room given, but whatever holds the editor still cuts the guess.
@@ -683,6 +738,7 @@ import { ahead, goOn } from '../src/js/predict.js'
         // Important: a page's own min-height may be (chatgpt.com's is), and
         // would otherwise win over the room.
         el.style.setProperty('min-height', `${height}px`, 'important')
+        note('grow', { height })
         return true
     }
 
@@ -870,9 +926,23 @@ import { ahead, goOn } from '../src/js/predict.js'
     // ------------------------------------------------------------ keeping it
 
     // Put text in the field as if typed: the page hears it as input, and
-    // undo takes it back.
+    // undo takes it back. An editor that keeps its own document (Slate, as
+    // Discord's box is) writes typing itself from the beforeinput, which
+    // Chrome's execCommand never sends, and puts its document back over
+    // what it did not write: so an editor hears one first, and one that
+    // cancels it has written the text.
     function insert(text) {
         const { el, kind } = field
+        const typing = new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'insertText',
+            data: text
+        })
+        const page = kind === 'editable' && !el.dispatchEvent(typing)
+        note('insert', { word: text.length, page })
+        if (page) return
         if (document.execCommand('insertText', false, text)) return
         if (kind === 'editable') return
         const at = el.selectionStart
@@ -888,12 +958,22 @@ import { ahead, goOn } from '../src/js/predict.js'
     }
 
     // Keep the guess's next word (its leading space and any punctuation
-    // stuck to it).
+    // stuck to it). An editor that writes the text itself (Slate, in React,
+    // as Discord's box is) shows it a render later, 10-20 ms after, while a
+    // held Tab keeps a word every 25 ms: so the next word waits until the
+    // last shows, or SHOW_WAIT passes (a page may change what it is given).
+    // Read from the old text, a word was kept twice.
+    let taken = null // { text, at }: the text before the caret, once it shows
     function takeWord() {
         const state = field && caretIn(field)
+        const waiting = taken && Date.now() - taken.at < SHOW_WAIT
+        if (waiting && state?.before !== taken.text) return note('wait')
         const rest = state?.atEnd ? shown(state) : null
-        if (!rest) return
-        insert(/^\s*\S+/.exec(rest)?.[0] ?? rest)
+        if (!rest) return note(state?.atEnd ? 'nothing' : 'not at end')
+        const word = /^\s*\S+/.exec(rest)?.[0] ?? rest
+        taken = { text: state.before + word, at: Date.now() }
+        note('take', { word: word.length })
+        insert(word)
         changed()
     }
 
@@ -935,6 +1015,7 @@ import { ahead, goOn } from '../src/js/predict.js'
             event.stopImmediatePropagation()
             run = Date.now()
             if (event.repeat || holding) return
+            note('tab')
             takeWord()
             const hold = (holding = {
                 delay: setTimeout(
@@ -957,6 +1038,8 @@ import { ahead, goOn } from '../src/js/predict.js'
         if (event.key === 'Tab' && holding) {
             release()
             event.stopImmediatePropagation()
+            note('tab up')
+            keepSteps()
         }
         if (field) changed()
     }
@@ -967,6 +1050,14 @@ import { ahead, goOn } from '../src/js/predict.js'
     function onFocus() {
         const found = fieldOf(focused())
         if (found?.el === field?.el) return
+        keepSteps()
+        watcher.disconnect()
+        if (found)
+            watcher.observe(found.el, {
+                subtree: true,
+                childList: true,
+                characterData: true
+            })
         release()
         drop()
         shrink()
@@ -986,19 +1077,35 @@ import { ahead, goOn } from '../src/js/predict.js'
     addEventListener('keyup', onKeyUp, true)
     addEventListener('focusin', onFocus, true)
     addEventListener('focusout', () => setTimeout(onFocus), true)
-    addEventListener(
-        'input',
-        () => {
-            if (!field || writing) return
-            typed = true
-            changed()
-        },
-        true
-    )
+    // Typing. A page that writes the text itself cancels the beforeinput,
+    // and no input follows (Discord's box, in Firefox, has Slate type every
+    // character): the beforeinput counts as typed, and the selection moving
+    // on as the page writes brings the guess.
+    for (const type of ['beforeinput', 'input'])
+        addEventListener(
+            type,
+            () => {
+                if (!field || writing) return
+                typed = true
+                changed()
+            },
+            true
+        )
     addEventListener('pointerdown', onPress, true)
     addEventListener('pointerup', onRelease, true)
     addEventListener('blur', release)
-    document.addEventListener('selectionchange', () => field && changed())
+    document.addEventListener('selectionchange', () => {
+        note('caret')
+        if (field) changed()
+    })
+    // After the page's own handlers: whether it wrote the text itself.
+    addEventListener('beforeinput', (event) =>
+        note('beforeinput', {
+            input: event.inputType,
+            trusted: event.isTrusted,
+            cancelled: event.defaultPrevented
+        })
+    )
     addEventListener('scroll', () => current && draw(), {
         capture: true,
         passive: true

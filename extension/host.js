@@ -234,6 +234,30 @@ function onPage(port, message) {
     else if (message?.wake) rest()
     else if (typeof message?.prefetch?.line === 'string' && asker?.ready())
         asker.prefetch(message.prefetch.line.slice(-PAGE_TEXT))
+    else if (message?.trace) keepTrace(message.trace)
+}
+
+// A development install (loaded unpacked, or as a temporary add-on)
+// traces the ghost's steps in page fields, for bug reports, never the
+// words (page.js), and keeps the latest here, where `node main.js
+// --trace` reads it from the browser's profile; nothing is sent anywhere.
+// Firefox's background is this page; in Chrome the service worker says
+// whether to (background.js), since an offscreen document cannot ask.
+const TRACE = 'trace'
+api.management
+    ?.getSelf()
+    .then(({ installType }) =>
+        api.storage.local.set({ tracing: installType === 'development' })
+    )
+    .catch((err) => console.warn('host: no install type:', err.message))
+
+function keepTrace(trace) {
+    const kept = { browser: navigator.userAgent, at: Date.now(), ...trace }
+    try {
+        localStorage.setItem(TRACE, JSON.stringify(kept))
+    } catch (err) {
+        console.warn('host: the trace was not kept:', err.message)
+    }
 }
 
 // ------------------------------------------------------------ terminals

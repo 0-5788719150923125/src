@@ -50,6 +50,16 @@ chrome.runtime.onStartup.addListener(open)
 chrome.runtime.onInstalled.addListener(open)
 open()
 
+// A development install (loaded unpacked) traces the ghost's steps in page
+// fields, for bug reports (page.js, host.js); the offscreen document has
+// no management API to ask with, so this worker says.
+chrome.management
+    .getSelf()
+    .then(({ installType }) =>
+        chrome.storage.local.set({ tracing: installType === 'development' })
+    )
+    .catch((err) => console.warn('background: no install type:', err.message))
+
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message?.type === 'host') {
         openHost().then(
