@@ -181,9 +181,9 @@ export function manifest(
         ]
     }
     // unlimitedStorage: the model's weights (137 MB) and the radio's songs
-    // stay put. The site: the chat's relay answers the extension only with
-    // access to it.
-    const permissions = ['storage', 'unlimitedStorage']
+    // stay put. notifications: /alert (chat.js). The site: the chat's relay
+    // answers the extension only with access to it.
+    const permissions = ['storage', 'unlimitedStorage', 'notifications']
     const relay = `${new URL(site).origin}/*`
     if (browser === 'chromium') {
         return {

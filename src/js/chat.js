@@ -210,15 +210,44 @@ export async function send(message) {
 
 // ------------------------------------------------------------ notifications
 
+// A desktop notification for every line heard, from /alert until /alert
+// again. The extension has its permission from its manifest, so the choice
+// is kept apart (localStorage, shared with its background, where the chat
+// runs), and its pages use the extensions' API where they have it: Firefox
+// gives them none through the web's (Chrome's offscreen document, which
+// has no extension API, does).
+const ALERTS = 'alerts' // localStorage: set while /alert is on
+const notifications = globalThis.chrome?.notifications
+
 function notify(body) {
-    if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification(t('alert.title'), { body, icon: 'favicon.ico' })
-    }
+    if (!localStorage.getItem(ALERTS)) return
+    const title = t('alert.title')
+    const icon = 'favicon.ico'
+    if (notifications)
+        notifications.create({
+            type: 'basic',
+            title,
+            message: body,
+            iconUrl: icon
+        })
+    else if (Notification.permission === 'granted')
+        new Notification(title, { body, icon })
 }
 
 // /alert
-export async function enableAlerts() {
-    if (!('Notification' in window)) return say(t('alert.unsupported'))
-    if ((await Notification.requestPermission()) === 'granted')
-        notify(t('alert.enabled'))
+export async function toggleAlerts() {
+    if (localStorage.getItem(ALERTS)) {
+        localStorage.removeItem(ALERTS)
+        return say(t('alert.disabled'))
+    }
+    if (!notifications && !('Notification' in window))
+        return say(t('alert.unsupported'))
+    if (
+        !notifications &&
+        (await Notification.requestPermission()) !== 'granted'
+    )
+        return say(t('alert.denied'))
+    localStorage.setItem(ALERTS, '1')
+    say(t('alert.enabled'))
+    notify(t('alert.enabled'))
 }

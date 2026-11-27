@@ -12,7 +12,7 @@ import * as writer from './writer.js'
 
 export const COMMANDS = [
     { name: '/about', run: about },
-    { name: '/alert', run: chat.enableAlerts },
+    { name: '/alert', run: chat.toggleAlerts },
     { name: '/clear', run: clear },
     { name: '/chat', run: chat.setChat },
     { name: '/help', run: help },
